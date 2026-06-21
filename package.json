@@ -1,0 +1,18 @@
+{
+  "name": "dpo-pj-protection-saas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Plataforma comercial SaaS — licenciamento, cobranca, kill-switch e auditoria. DPO PJ Protection / PJ Technology Solutions.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "jose": "^5.9.6"
+  },
+  "scripts": {
+    "migrate": "node scripts/migrate.mjs",
+    "dev": "netlify dev"
+  }
+}

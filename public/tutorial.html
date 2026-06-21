@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tutorial operacional — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .doc{max-width:820px;margin:0 auto}
+  .doc h2{margin-top:34px;padding-top:18px;border-top:1px solid var(--line)}
+  .doc h3{margin-top:22px;color:var(--gold2)}
+  .doc p,.doc li{color:var(--mut);line-height:1.65}
+  .doc ol,.doc ul{padding-left:22px}
+  .doc li{margin:7px 0}
+  .step{display:flex;gap:14px;align-items:flex-start;margin:14px 0}
+  .step .n{flex:none;width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .note{background:rgba(91,140,196,.10);border:1px solid rgba(91,140,196,.3);border-radius:10px;padding:12px 14px;margin:14px 0;color:#cfe0f7;font-size:13.5px}
+  .toc a{display:block;padding:4px 0;color:var(--gold2)}
+  code{background:#0b1a31;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#cfe0f7}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap"><div class="brand">DPO PJ <span class="g">Protection</span></div>
+  <nav class="nav"><a href="/painel" class="btn ghost sm">Voltar ao painel</a></nav></div></header>
+
+<main class="wrap section-pad">
+<div class="doc">
+  <h1>Tutorial operacional — vendas e gestão</h1>
+  <p>Guia exclusivo do dono. Do contato com o cliente à ativação, monitoramento,
+     cobrança, upgrade e auditoria. Tudo pelo painel <code>/painel</code>.</p>
+
+  <div class="card toc" style="margin:18px 0">
+    <b>Índice</b>
+    <a href="#fluxo">1. Como funciona o ciclo comercial</a>
+    <a href="#emitir">2. Emitir licença e enviar para o cliente</a>
+    <a href="#ativacao">3. O que o cliente faz (ativação)</a>
+    <a href="#killswitch">4. Kill-switch: bloquear / reativar</a>
+    <a href="#upgrade">5. Upgrade de módulo e cota (sem perder dados)</a>
+    <a href="#cobranca">6. Cobrança automática e vencimentos</a>
+    <a href="#financeiro">7. Financeiro e NFS-e</a>
+    <a href="#consultoria">8. Seus clientes de consultoria</a>
+    <a href="#auditoria">9. Auditoria e versionamento</a>
+    <a href="#checklist">10. Checklist de venda (resumo)</a>
+  </div>
+
+  <h2 id="fluxo">1. Como funciona o ciclo comercial</h2>
+  <p>São dois caminhos para o cliente entrar:</p>
+  <ul>
+    <li><b>Autoatendimento:</b> o cliente acessa <code>/checkout.html</code>, escolhe o módulo
+        e paga. Ao confirmar o pagamento, o sistema ativa e envia o link de ativação automaticamente.</li>
+    <li><b>Venda assistida (você no controle):</b> você emite a licença pelo painel e envia o
+        link você mesmo (WhatsApp/e-mail). Ideal para negociações e cobrança avulsa.</li>
+  </ul>
+  <div class="note">Módulos: <b>Básico</b> (25 clientes), <b>Intermediário</b> (100),
+    <b>Avançado</b> (150). Recorrente tem <b>5% de desconto</b> e renova sozinho;
+    avulso bloqueia no vencimento.</div>
+
+  <h2 id="emitir">2. Emitir licença e enviar para o cliente</h2>
+  <div class="step"><div class="n">1</div><div>No painel, clique em <b>“+ Emitir licença”</b> (topo do Painel ou aba <b>Licenças</b>).</div></div>
+  <div class="step"><div class="n">2</div><div>Preencha nome, e-mail e WhatsApp do cliente, escolha o <b>módulo</b> e o tipo de <b>cobrança</b>.</div></div>
+  <div class="step"><div class="n">3</div><div>Clique em <b>“Gerar licença e link”</b>. O sistema cria o cliente e mostra três coisas prontas:</div></div>
+  <ul>
+    <li><b>Link de ativação</b> — botão <b>Copiar</b>.</li>
+    <li><b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) — botão <b>Copiar</b>.</li>
+    <li><b>Mensagem pronta</b> (com o passo a passo já escrito) — botão <b>Copiar mensagem</b>
+        e, se houver WhatsApp, <b>Enviar no WhatsApp</b> (abre a conversa já com o texto).</li>
+  </ul>
+  <div class="note">Para reenviar depois: aba <b>Licenças</b> → botão <b>“Enviar/Copiar”</b> na linha
+    do cliente. Cada envio fica registrado na <b>Auditoria</b>.</div>
+
+  <h2 id="ativacao">3. O que o cliente faz (ativação)</h2>
+  <ol>
+    <li>Abre o link recebido (cai em <code>/ativar</code> com a licença já preenchida).</li>
+    <li>Cria o usuário dele (e-mail + senha).</li>
+    <li>Confirma a licença → o módulo é <b>destravado na primeira vez</b> e o acesso fica ativo.</li>
+  </ol>
+  <p>A partir daí ele entra pela tela de login em <code>/</code>.</p>
+
+  <h2 id="killswitch">4. Kill-switch: bloquear / reativar</h2>
+  <p>O controle de acesso é feito no servidor a cada requisição. Você pode agir manualmente:</p>
+  <ul>
+    <li><b>Suspender</b> (aba Licenças → <b>Suspender</b>): corta o acesso imediatamente. Reversível.</li>
+    <li><b>Reativar</b>: devolve o acesso (após regularização, por exemplo).</li>
+    <li><b>Revogar</b>: encerra a licença em definitivo (cancela a assinatura do cliente).</li>
+  </ul>
+  <div class="note">Bloqueios por <b>inadimplência</b> acontecem sozinhos (veja item 6).
+    Use a ação manual para casos pontuais.</div>
+
+  <h2 id="upgrade">5. Upgrade de módulo e cota (sem perder dados)</h2>
+  <p>Na aba <b>Assinantes</b>, na linha do cliente:</p>
+  <ul>
+    <li><b>Módulo</b>: troca para outro plano (upgrade/downgrade). A cota de clientes se ajusta
+        automaticamente e <b>nenhum dado do cliente é perdido</b> — o ambiente é o mesmo para todos os módulos.</li>
+    <li><b>Cota</b>: define um limite sob medida (ex.: um cliente com 200 clientes). Vazio = usa a cota do módulo.</li>
+  </ul>
+
+  <h2 id="cobranca">6. Cobrança automática e vencimentos</h2>
+  <p>Todo dia o sistema:</p>
+  <ol>
+    <li>Avisa o cliente <b>3 dias antes</b> do vencimento.</li>
+    <li>No vencimento, entra em <b>carência</b> (padrão 5 dias).</li>
+    <li>Passada a carência, <b>bloqueia o acesso</b> (kill-switch) e suspende a licença.</li>
+    <li>Quando o pagamento é confirmado (webhook do gateway), <b>reativa automaticamente</b>.</li>
+  </ol>
+  <p>No <b>Painel</b>, o bloco <b>“Vencimentos & atrasos”</b> mostra quem está vencendo/atrasado,
+     com botão <b>Cobrar</b> (abre o WhatsApp com a mensagem pronta).</p>
+
+  <h2 id="financeiro">7. Financeiro e NFS-e</h2>
+  <p>Aba <b>Financeiro</b>: lista os pagamentos. Para pagamentos confirmados, o botão
+     <b>“Emitir NFS-e”</b> dispara a nota (se a integração Focus NFe estiver configurada).</p>
+
+  <h2 id="consultoria">8. Seus clientes de consultoria</h2>
+  <p>Aba <b>Meus clientes</b>: seu ambiente próprio, <b>ilimitado</b>, para cadastrar os clientes
+     das suas consultorias — separado dos assinantes da plataforma.</p>
+
+  <h2 id="auditoria">9. Auditoria e versionamento</h2>
+  <p>Aba <b>Auditoria</b>: registro <b>imutável</b> de todos os eventos de licença
+     (emitida, enviada, ativada, suspensa, reativada, revogada, upgrade/downgrade, mudança de cota).
+     Cada licença tem um número de <b>versão</b> que incrementa a cada mudança de estado —
+     rastreabilidade total para fins legais e de conformidade.</p>
+
+  <h2 id="checklist">10. Checklist de venda (resumo)</h2>
+  <ol>
+    <li>Painel → <b>+ Emitir licença</b> → preencher dados + módulo + cobrança.</li>
+    <li><b>Copiar mensagem</b> (ou <b>Enviar no WhatsApp</b>) e mandar para o cliente.</li>
+    <li>Cliente ativa pelo link (cria usuário + confirma licença).</li>
+    <li>Acompanhar pagamento no <b>Financeiro</b>; emitir <b>NFS-e</b>.</li>
+    <li>Monitorar <b>Vencimentos</b>; cobrar com 1 clique se necessário.</li>
+    <li>Upgrade/cota conforme o cliente cresce — sem perder dados.</li>
+  </ol>
+
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection.</p>
+</div>
+</main>
+</body>
+</html>

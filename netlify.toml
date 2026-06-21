@@ -1,0 +1,66 @@
+#  DPO PJ Protection — Plataforma SaaS (Netlify serverless + Neon Postgres)
+#  ----------------------------------------------------------------------
+#  O CONTEUDO desta pasta (saas-netlify) vai na RAIZ do repositorio GitHub.
+#  Por isso NAO usamos "base" — a raiz do repo ja e a raiz do projeto.
+#  Frontend estatico em /public ; API em funcoes serverless.
+
+[build]
+  publish = "public"
+  # A cada deploy (via Git/CLI da Netlify) aplicamos a migracao do banco
+  # automaticamente. O schema e idempotente (CREATE/ALTER ... IF NOT EXISTS,
+  # seeds com ON CONFLICT), entao rodar de novo nunca duplica nem perde dados.
+  # Se o banco nao estiver acessivel no build, o deploy NAO falha: apenas avisa
+  # e voce roda `npm run migrate` manualmente quando mudar a estrutura do banco.
+  command = "npm run migrate || echo '⚠ Migracao nao aplicada no build — rode: DATABASE_URL=... npm run migrate'"
+
+[functions]
+  # Funcoes em ESM (Node 20). O Netlify empacota node_modules automaticamente.
+  directory    = "netlify/functions"
+  node_bundler = "esbuild"
+
+# A funcao "api" usa roteamento interno e responde em /api/*.
+# (As funcoes tambem declaram seus proprios `config.path`, isto aqui e redundancia segura.)
+[[redirects]]
+  from   = "/api/*"
+  to     = "/.netlify/functions/api/:splat"
+  status = 200
+
+# Webhooks dos gateways de pagamento.
+[[redirects]]
+  from = "/webhooks/mercadopago"
+  to   = "/.netlify/functions/webhook-mercadopago"
+  status = 200
+[[redirects]]
+  from = "/webhooks/stripe"
+  to   = "/.netlify/functions/webhook-stripe"
+  status = 200
+[[redirects]]
+  from = "/webhooks/pagarme"
+  to   = "/.netlify/functions/webhook-pagarme"
+  status = 200
+
+# SPA / paginas amigaveis
+[[redirects]]
+  from = "/painel"
+  to   = "/owner/index.html"
+  status = 200
+[[redirects]]
+  from = "/ativar"
+  to   = "/ativar.html"
+  status = 200
+[[redirects]]
+  from = "/demo"
+  to   = "/demo.html"
+  status = 200
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Cabecalhos de seguranca basicos
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options        = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+    Permissions-Policy     = "geolocation=(), microphone=(), camera=()"

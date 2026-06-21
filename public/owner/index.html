@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel do Dono — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ====== TOPBAR ====== -->
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">DPO PJ <span class="g">Protection</span></div>
+    <nav class="nav" id="nav">
+      <button data-view="dashboard" class="active">Painel</button>
+      <button data-view="licenses">Licenças</button>
+      <button data-view="tenants">Assinantes</button>
+      <button data-view="payments">Financeiro</button>
+      <button data-view="clients">Meus clientes</button>
+      <button data-view="audit">Auditoria</button>
+      <a href="/app/" class="nav-link" style="color:var(--gold2)">Consultoria completa ↗</a>
+      <a href="/tutorial.html" class="nav-link">Tutorial</a>
+      <button id="btnLogout" class="logout">Sair</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap section-pad">
+
+  <!-- ============ DASHBOARD ============ -->
+  <section id="view-dashboard" class="view">
+    <div class="flex between wrap-actions" style="margin-bottom:6px">
+      <div>
+        <h1>Painel de gestão</h1>
+        <p class="muted small">Visão geral das licenças, assinaturas e vencimentos.</p>
+      </div>
+      <div class="flex wrap-actions" style="gap:8px">
+        <button class="btn ghost" id="btnDemo">Link de demonstração</button>
+        <button class="btn gold" id="btnEmitirTop">+ Emitir licença</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"><div class="muted">Carregando…</div></div>
+
+    <div class="row c2" style="align-items:start">
+      <div class="card">
+        <div class="flex between"><h2>Vencimentos & atrasos</h2><span class="small muted">próx. 7 dias</span></div>
+        <div id="overdueBox" class="small muted">Carregando…</div>
+      </div>
+      <div class="card">
+        <h2>Distribuição por módulo</h2>
+        <div id="byPlanBox" class="small muted">Carregando…</div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+        <h3>Integrações ativas</h3>
+        <div id="integ" class="small muted">Carregando…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LICENÇAS ============ -->
+  <section id="view-licenses" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:14px">
+      <div><h1>Licenças</h1><p class="muted small">Emita, envie o link de ativação e controle o acesso (kill-switch).</p></div>
+      <button class="btn gold" id="btnEmitir">+ Emitir licença</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead><tr>
+          <th>Cliente</th><th>Módulo</th><th>Licença</th><th>Status</th><th>Validade</th><th style="text-align:right">Ações</th>
+        </tr></thead>
+        <tbody id="licRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ ASSINANTES ============ -->
+  <section id="view-tenants" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:14px">
+      <div><h1>Assinantes</h1><p class="muted small">Clientes da plataforma. Ajuste módulo (upgrade/downgrade) e cota sem perder dados.</p></div>
+      <button class="btn ghost" id="btnNovoTenant">+ Novo assinante</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead><tr>
+          <th>Cliente</th><th>Módulo</th><th>Status</th><th>Clientes</th><th>Pago até</th><th style="text-align:right">Ações</th>
+        </tr></thead>
+        <tbody id="tenantRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ FINANCEIRO ============ -->
+  <section id="view-payments" class="view hide">
+    <h1>Financeiro</h1>
+    <p class="muted small">Pagamentos recebidos e emissão de NFS-e.</p>
+    <div class="card" style="padding:0;overflow:auto;margin-top:12px">
+      <table>
+        <thead><tr><th>Data</th><th>Cliente</th><th>Método</th><th>Valor</th><th>Status</th><th style="text-align:right">NFS-e</th></tr></thead>
+        <tbody id="payRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ MEUS CLIENTES (consultoria) ============ -->
+  <section id="view-clients" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:14px">
+      <div><h1>Meus clientes (consultoria)</h1><p class="muted small">Ambiente ilimitado do dono para os seus próprios clientes de consultoria.</p></div>
+      <button class="btn ghost" id="btnNovoCliente">+ Novo cliente</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead><tr><th>Nome</th><th>CNPJ</th><th>Setor</th><th>Contato</th><th>Criado</th></tr></thead>
+        <tbody id="clientRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ AUDITORIA ============ -->
+  <section id="view-audit" class="view hide">
+    <h1>Auditoria de licenças</h1>
+    <p class="muted small">Registro imutável e versionado de todos os eventos de licença.</p>
+    <div class="card" style="padding:0;overflow:auto;margin-top:12px">
+      <table>
+        <thead><tr><th>Quando</th><th>Evento</th><th>Por</th><th>Licença</th><th>Detalhe</th></tr></thead>
+        <tbody id="auditRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ MODAL: EMITIR LICENÇA ============ -->
+<div class="modal-bg" id="modalEmitir">
+  <div class="modal">
+    <button class="close" data-close>&times;</button>
+    <h2>Emitir licença</h2>
+    <p class="muted small">Cria o assinante e gera o link de ativação + a licença prontos para enviar.</p>
+
+    <div id="emitForm">
+      <div class="row c2">
+        <div class="field"><label>Nome do cliente *</label><input id="e_name" placeholder="Empresa LTDA"></div>
+        <div class="field"><label>CNPJ/CPF</label><input id="e_doc" placeholder="00.000.000/0000-00"></div>
+      </div>
+      <div class="row c2">
+        <div class="field"><label>E-mail</label><input id="e_email" type="email" placeholder="contato@empresa.com.br"></div>
+        <div class="field"><label>WhatsApp (com DDD)</label><input id="e_phone" placeholder="+55 11 90000-0000"></div>
+      </div>
+      <div class="row c2">
+        <div class="field"><label>Módulo</label><select id="e_plan"></select></div>
+        <div class="field"><label>Cobrança</label>
+          <select id="e_billing"><option value="monthly">Avulsa (bloqueia no vencimento)</option><option value="recurring">Recorrente (renova automático, -5%)</option></select>
+        </div>
+      </div>
+      <button class="btn gold block" id="btnDoEmit">Gerar licença e link</button>
+    </div>
+
+    <!-- Resultado: link + licença + mensagem prontos para copiar -->
+    <div id="emitResult" class="hide">
+      <div class="card" style="background:rgba(55,178,77,.08);border-color:rgba(55,178,77,.35);margin-bottom:14px">
+        <b style="color:#8fe6a0">✓ Licença emitida.</b> <span class="small muted">Copie e envie ao cliente.</span>
+      </div>
+
+      <label>Link de ativação</label>
+      <div class="copybox"><span class="val" id="r_link"></span><button class="btn sm gold" data-copy="r_link">Copiar</button></div>
+
+      <label>Licença de ativação</label>
+      <div class="copybox"><span class="val" id="r_key"></span><button class="btn sm gold" data-copy="r_key">Copiar</button></div>
+
+      <label>Mensagem pronta (WhatsApp / e-mail)</label>
+      <div class="copybox" style="align-items:flex-start"><span class="val" id="r_msg" style="white-space:pre-wrap"></span></div>
+      <div class="flex wrap-actions" style="gap:8px;margin-top:8px">
+        <button class="btn sm gold" data-copy="r_msg">Copiar mensagem</button>
+        <a class="btn sm green hide" id="r_wa" target="_blank" rel="noopener">Enviar no WhatsApp</a>
+        <button class="btn sm ghost" id="btnEmitOutra">Emitir outra</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: ENVIAR/COPIAR (licença existente) ============ -->
+<div class="modal-bg" id="modalSend">
+  <div class="modal">
+    <button class="close" data-close>&times;</button>
+    <h2>Enviar para o cliente</h2>
+    <p class="muted small">Copie o link, a licença ou a mensagem pronta. O envio fica registrado na auditoria.</p>
+    <label>Link de ativação</label>
+    <div class="copybox"><span class="val" id="s_link"></span><button class="btn sm gold" data-copy="s_link">Copiar</button></div>
+    <label>Licença</label>
+    <div class="copybox"><span class="val" id="s_key"></span><button class="btn sm gold" data-copy="s_key">Copiar</button></div>
+    <label>Mensagem pronta</label>
+    <div class="copybox" style="align-items:flex-start"><span class="val" id="s_msg" style="white-space:pre-wrap"></span></div>
+    <div class="flex wrap-actions" style="gap:8px;margin-top:8px">
+      <button class="btn sm gold" data-copy="s_msg">Copiar mensagem</button>
+      <a class="btn sm green hide" id="s_wa" target="_blank" rel="noopener">Enviar no WhatsApp</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: LINK DE DEMONSTRAÇÃO ============ -->
+<div class="modal-bg" id="modalDemo">
+  <div class="modal">
+    <button class="close" data-close>&times;</button>
+    <h2>Link de demonstração</h2>
+    <p class="muted small">Ambiente completo com clientes de exemplo já cadastrados.
+      O visitante percorre todo o processo operacional por <b>7 dias</b>. Ao gerar um novo
+      link, o ambiente anterior é <b>apagado com todos os dados</b> e recriado do zero.</p>
+
+    <div id="demoBox" class="small muted" style="margin-top:8px">Carregando…</div>
+
+    <div id="demoResult" class="hide" style="margin-top:12px">
+      <label>Link de demonstração</label>
+      <div class="copybox"><span class="val" id="d_link"></span><button class="btn sm gold" data-copy="d_link">Copiar</button></div>
+      <p class="small muted" id="d_expires" style="margin-top:6px"></p>
+    </div>
+
+    <div class="flex wrap-actions" style="gap:8px;margin-top:12px">
+      <button class="btn gold" id="btnDemoGen">Gerar novo link (apaga e recria)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: NOVO ASSINANTE / CLIENTE / UPGRADE ============ -->
+<div class="modal-bg" id="modalGeneric">
+  <div class="modal">
+    <button class="close" data-close>&times;</button>
+    <h2 id="g_title">—</h2>
+    <div id="g_body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/owner/owner.js"></script>
+</body>
+</html>

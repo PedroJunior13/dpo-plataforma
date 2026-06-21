@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plataforma — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">DPO PJ <span class="g">Protection</span></div>
+    <nav class="nav" id="nav">
+      <button data-view="dashboard" class="active">Início</button>
+      <button data-view="clients">Clientes</button>
+      <button data-view="documents">Documentos</button>
+      <button data-view="requests">Titulares</button>
+      <button data-view="incidents">Incidentes</button>
+      <button data-view="projects" data-feat="projects">Projetos</button>
+      <button data-view="team" data-feat="team">Equipe</button>
+      <button data-view="account">Conta</button>
+      <button id="btnLogout" class="logout">Sair</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap section-pad">
+
+  <!-- banner do dono (consultoria) -->
+  <div id="ownerBanner" class="card hide" style="margin-bottom:16px;background:rgba(217,164,65,.08);border-color:rgba(217,164,65,.35)">
+    <div class="flex between wrap-actions">
+      <div><b style="color:var(--gold2)">Ambiente de consultoria (completo)</b>
+        <span class="small muted">— acesso total, clientes ilimitados.</span></div>
+      <a href="/painel" class="btn sm ghost">Ir para o painel do dono</a>
+    </div>
+  </div>
+
+  <!-- banner de demonstração -->
+  <div id="demoBanner" class="card hide" style="margin-bottom:16px;background:rgba(55,178,77,.08);border-color:rgba(55,178,77,.35)">
+    <div class="flex between wrap-actions">
+      <div><b style="color:#8fe6a0">Ambiente de demonstração</b>
+        <span class="small muted" id="demoBannerMsg">— dados de exemplo. Explore livremente.</span></div>
+      <a href="/checkout.html" class="btn sm gold">Contratar agora</a>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <section id="view-dashboard" class="view">
+    <h1 id="hello">Olá</h1>
+    <p class="muted small" id="planLine">—</p>
+    <div class="kpis" id="kpis"><div class="muted">Carregando…</div></div>
+    <div class="card">
+      <h2>Comece por aqui</h2>
+      <ol class="muted" style="line-height:1.9">
+        <li>Cadastre seu <b>cliente</b> na aba Clientes.</li>
+        <li>Gere os <b>documentos versionados</b> (políticas, registros ROPA, contratos).</li>
+        <li>Registre <b>solicitações de titulares</b> e <b>incidentes</b> conforme surgirem.</li>
+        <li id="hintProjects">Organize as <b>fases do projeto</b> e tarefas (módulo Intermediário+).</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- CLIENTES -->
+  <section id="view-clients" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Clientes</h1><p class="muted small" id="quotaLine">—</p></div>
+      <button class="btn gold" id="btnNovoClient">+ Novo cliente</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Nome</th><th>CNPJ</th><th>Setor</th><th>Fase</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead>
+      <tbody id="clientRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- DETALHE DO CLIENTE -->
+  <section id="view-client" class="view hide">
+    <button class="btn sm ghost" id="backClients">&larr; Voltar</button>
+    <h1 id="cl_name" style="margin-top:10px">—</h1>
+    <p class="muted small" id="cl_meta">—</p>
+    <div class="row c2" style="align-items:start;margin-top:8px">
+      <div class="card">
+        <div class="flex between"><h3>Documentos</h3><button class="btn sm gold" id="cl_addDoc">+ Documento</button></div>
+        <div id="cl_docs" class="small muted">—</div>
+      </div>
+      <div class="card">
+        <div class="flex between"><h3>Solicitações de titulares</h3><button class="btn sm gold" id="cl_addReq">+ Solicitação</button></div>
+        <div id="cl_reqs" class="small muted">—</div>
+      </div>
+    </div>
+    <div class="row c2" style="align-items:start;margin-top:14px">
+      <div class="card">
+        <div class="flex between"><h3>Incidentes</h3><button class="btn sm gold" id="cl_addInc">+ Incidente</button></div>
+        <div id="cl_incs" class="small muted">—</div>
+      </div>
+      <div class="card" id="cl_projWrap">
+        <div class="flex between"><h3>Projetos / fases</h3><button class="btn sm gold" id="cl_addProj">+ Projeto</button></div>
+        <div id="cl_projs" class="small muted">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOCUMENTOS (global) -->
+  <section id="view-documents" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Documentos</h1><p class="muted small">Documentos versionados (LGPD/GDPR).</p></div>
+      <button class="btn gold" id="btnNovoDoc">+ Novo documento</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Título</th><th>Tipo</th><th>Versão</th><th>Criado</th><th style="text-align:right">Ações</th></tr></thead>
+      <tbody id="docRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- TITULARES -->
+  <section id="view-requests" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Solicitações de titulares</h1><p class="muted small">Acesso, correção, exclusão, portabilidade (art. 18 LGPD).</p></div>
+      <button class="btn gold" id="btnNovaReq">+ Nova solicitação</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Tipo</th><th>Solicitante</th><th>Cliente</th><th>Status</th><th>Aberta</th><th style="text-align:right">Ações</th></tr></thead>
+      <tbody id="reqRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- INCIDENTES -->
+  <section id="view-incidents" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Incidentes</h1><p class="muted small">Violações de dados e tratativas.</p></div>
+      <button class="btn gold" id="btnNovoInc">+ Novo incidente</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Título</th><th>Cliente</th><th>Severidade</th><th>Status</th><th>Aberto</th><th style="text-align:right">Ações</th></tr></thead>
+      <tbody id="incRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- PROJETOS -->
+  <section id="view-projects" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Projetos / fases</h1><p class="muted small">Gestão das fases de adequação e tarefas.</p></div>
+      <button class="btn gold" id="btnNovoProj">+ Novo projeto</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Projeto</th><th>Cliente</th><th>Fase</th><th>Prazo</th><th style="text-align:right">Tarefas</th></tr></thead>
+      <tbody id="projRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- EQUIPE -->
+  <section id="view-team" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:12px">
+      <div><h1>Equipe</h1><p class="muted small">Usuários com acesso (menor privilégio). Módulo Avançado.</p></div>
+      <button class="btn gold" id="btnNovoMembro">+ Adicionar membro</button>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>2FA</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead>
+      <tbody id="teamRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- CONTA / MFA -->
+  <section id="view-account" class="view hide">
+    <h1>Conta & segurança</h1>
+    <div class="row c2" style="align-items:start;margin-top:8px">
+      <div class="card">
+        <h3>Verificação em duas etapas (2FA)</h3>
+        <p class="muted small">Proteja seu acesso com um app autenticador (Google Authenticator, Authy, 1Password…).</p>
+        <div id="mfaStatus" class="small">—</div>
+        <div id="mfaSetup" class="hide" style="margin-top:12px">
+          <p class="small muted">Escaneie o QR no seu autenticador (ou use a chave manual) e informe o código de 6 dígitos para confirmar.</p>
+          <div id="qr" class="center" style="background:#fff;padding:12px;border-radius:10px;width:max-content;margin:10px auto"></div>
+          <label>Chave manual</label>
+          <div class="copybox"><span class="val mono" id="mfaSecret"></span><button class="btn sm gold" id="copySecret">Copiar</button></div>
+          <div class="field" style="margin-top:10px"><label>Código do app</label><input id="mfaCode" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+          <button class="btn gold block" id="btnEnableMfa">Ativar 2FA</button>
+        </div>
+        <button class="btn gold" id="btnStartMfa" style="margin-top:12px">Configurar 2FA</button>
+        <div id="mfaDisableWrap" class="hide" style="margin-top:12px">
+          <div class="field"><label>Código do app para desativar</label><input id="mfaDisableCode" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+          <button class="btn danger" id="btnDisableMfa">Desativar 2FA</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Sua assinatura</h3>
+        <div id="subBox" class="small muted">—</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- MODAL genérico -->
+<div class="modal-bg" id="modal"><div class="modal">
+  <button class="close" data-close>&times;</button>
+  <h2 id="m_title">—</h2><div id="m_body"></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@gh-pages/qrcode.min.js"></script>
+<script src="/app/app.js"></script>
+</body>
+</html>

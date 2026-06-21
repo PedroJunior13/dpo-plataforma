@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contratar — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:22px 0}
+  @media(max-width:880px){.plans{grid-template-columns:1fr}}
+  .plan{cursor:pointer;border:1.5px solid var(--line);transition:.15s}
+  .plan:hover{border-color:var(--gold)}
+  .plan.sel{border-color:var(--gold);box-shadow:0 0 0 2px rgba(217,164,65,.25)}
+  .plan .price{font-size:28px;font-weight:800;color:var(--gold2)}
+  .plan ul{margin:12px 0 0;padding-left:18px;color:var(--mut);font-size:13px}
+  .plan ul li{margin:4px 0}
+  .seg{display:flex;gap:8px;flex-wrap:wrap}
+  .seg label{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;text-align:center;color:var(--txt);margin:0}
+  .seg input{display:none}
+  .seg input:checked + span{color:var(--gold2);font-weight:700}
+  .seg label:has(input:checked){border-color:var(--gold);background:rgba(217,164,65,.08)}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap"><div class="brand">DPO PJ <span class="g">Protection</span></div>
+  <nav class="nav"><a href="/" class="btn ghost sm">Já sou cliente</a></nav></div></header>
+
+<main class="wrap section-pad">
+  <h1>Escolha seu módulo</h1>
+  <p class="muted">Comece a operar sua conformidade LGPD hoje. Recorrente tem <b style="color:var(--gold2)">5% de desconto</b>.</p>
+
+  <div class="plans" id="plans"><div class="muted">Carregando módulos…</div></div>
+
+  <div class="row c2" style="align-items:start">
+    <div class="card">
+      <h2>Seus dados</h2>
+      <div class="field"><label>Nome / Razão social *</label><input id="t_name"></div>
+      <div class="row c2">
+        <div class="field"><label>CNPJ/CPF</label><input id="t_doc"></div>
+        <div class="field"><label>WhatsApp</label><input id="t_phone"></div>
+      </div>
+      <div class="field"><label>E-mail *</label><input id="t_email" type="email"></div>
+    </div>
+
+    <div class="card">
+      <h2>Pagamento</h2>
+      <label>Tipo de cobrança</label>
+      <div class="seg" style="margin-bottom:14px">
+        <label><input type="radio" name="billing" value="monthly" checked><span>Avulsa (mensal)</span><div class="small muted">Bloqueia no vencimento</div></label>
+        <label><input type="radio" name="billing" value="recurring"><span>Recorrente −5%</span><div class="small muted">Renova automático</div></label>
+      </div>
+
+      <label>Forma de pagamento</label>
+      <div class="seg" id="methods" style="margin-bottom:14px">
+        <label><input type="radio" name="method" value="pix" checked><span>PIX</span></label>
+        <label><input type="radio" name="method" value="boleto"><span>Boleto</span></label>
+        <label><input type="radio" name="method" value="credit_card"><span>Cartão</span></label>
+      </div>
+
+      <div class="field hide" id="gatewayWrap"><label>Gateway</label><select id="gateway"></select></div>
+
+      <div class="flex between" style="margin:14px 0">
+        <span class="muted">Total</span>
+        <span id="total" style="font-size:22px;font-weight:800;color:var(--gold2)">—</span>
+      </div>
+      <button class="btn gold block" id="btnPay">Ir para o pagamento</button>
+      <p id="err" class="small center hide" style="color:#ff9aa8;margin-top:12px"></p>
+      <p class="small muted center" style="margin-top:10px">Após o pagamento, você recebe o link de ativação por e-mail/WhatsApp.</p>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const brl = (c) => "R$ " + ((c || 0) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  function showErr(m) { const e = $("#err"); e.textContent = m; e.classList.remove("hide"); }
+
+  let PLANS = [], GATEWAYS = [], selected = null;
+
+  function billing() { return document.querySelector('input[name="billing"]:checked').value; }
+  function method() { return document.querySelector('input[name="method"]:checked').value; }
+
+  function priceFor(p) { return billing() === "recurring" ? p.price_recurring_cents : p.price_month_cents; }
+
+  function renderTotal() {
+    if (!selected) { $("#total").textContent = "—"; return; }
+    $("#total").textContent = brl(priceFor(selected)) + (billing() === "recurring" ? "/mês" : "");
+  }
+
+  function selectPlan(id) {
+    selected = PLANS.find((p) => p.id === id);
+    $$(".plan").forEach((el) => el.classList.toggle("sel", el.dataset.id === id));
+    renderTotal();
+  }
+
+  async function load() {
+    try {
+      const res = await fetch("/api/public/plans");
+      const d = await res.json();
+      PLANS = d.plans || []; GATEWAYS = d.gateways || [];
+      $("#plans").innerHTML = PLANS.map((p) => {
+        const feats = Array.isArray(p.features) ? p.features : (p.features?.items || p.features?.list || []);
+        const q = p.client_quota == null ? "Clientes ilimitados" : "Até " + p.client_quota + " clientes";
+        return `<div class="card plan" data-id="${esc(p.id)}">
+          <h3>${esc(p.name)}</h3>
+          <div class="price">${brl(p.price_month_cents)}<span class="small muted" style="font-weight:400">/mês</span></div>
+          <div class="small muted">Recorrente: ${brl(p.price_recurring_cents)}/mês</div>
+          <ul><li>${q}</li>${feats.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
+        </div>`;
+      }).join("");
+      $$(".plan").forEach((el) => el.addEventListener("click", () => selectPlan(el.dataset.id)));
+      if (PLANS[0]) selectPlan(PLANS[0].id);
+
+      if (GATEWAYS.length > 1) {
+        $("#gatewayWrap").classList.remove("hide");
+        $("#gateway").innerHTML = GATEWAYS.map((g) => `<option value="${esc(g)}" style="text-transform:capitalize">${esc(g)}</option>`).join("");
+      }
+    } catch (e) { $("#plans").innerHTML = `<div class="card" style="color:#ff9aa8">Não foi possível carregar os módulos.</div>`; }
+  }
+
+  $$('input[name="billing"]').forEach((r) => r.addEventListener("change", renderTotal));
+
+  $("#btnPay").addEventListener("click", async () => {
+    $("#err").classList.add("hide");
+    if (!selected) { showErr("Selecione um módulo."); return; }
+    const name = $("#t_name").value.trim(), email = $("#t_email").value.trim();
+    if (!name || !email) { showErr("Informe nome e e-mail."); return; }
+    const b = $("#btnPay"); b.disabled = true; b.textContent = "Processando…";
+    try {
+      const body = {
+        planId: selected.id, billingType: billing(), method: method(),
+        gateway: GATEWAYS.length > 1 ? $("#gateway").value : undefined,
+        tenant: { name, email, phone: $("#t_phone").value.trim(), doc: $("#t_doc").value.trim() },
+      };
+      const res = await fetch("/api/checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.ok === false) throw new Error(d.error || "Falha ao iniciar o pagamento.");
+      if (d.checkoutUrl) location.href = d.checkoutUrl;
+      else showErr("Pagamento criado, mas o gateway não retornou URL. Verifique a configuração.");
+    } catch (e) { showErr(e.message); b.disabled = false; b.textContent = "Ir para o pagamento"; }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

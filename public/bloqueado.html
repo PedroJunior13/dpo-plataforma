@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Acesso suspenso — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card card" style="max-width:520px">
+    <div class="center" style="margin-bottom:14px">
+      <div class="brand" style="font-size:22px">DPO PJ <span class="g">Protection</span></div>
+    </div>
+
+    <h2 style="margin:0 0 6px">Acesso temporariamente suspenso</h2>
+    <p class="muted small" id="msg">Sua assinatura está com pendência. Regularize para reativar o acesso imediatamente.</p>
+
+    <div class="card" style="background:rgba(217,164,65,.08);border-color:rgba(217,164,65,.35);margin-top:14px">
+      <b style="color:var(--gold2)">Como regularizar</b>
+      <ol class="muted small" style="line-height:1.9;margin:8px 0 0;padding-left:18px">
+        <li>Verifique a fatura mais recente enviada por e-mail/WhatsApp.</li>
+        <li>Efetue o pagamento pelo link da cobrança (Pix, cartão ou boleto).</li>
+        <li>A liberação é automática após a confirmação do pagamento.</li>
+      </ol>
+    </div>
+
+    <div class="flex" style="gap:10px;margin-top:16px">
+      <a class="btn gold block" id="btnWhats" target="_blank" rel="noopener">Falar com o suporte</a>
+      <button class="btn ghost block" id="btnRetry">Tentar novamente</button>
+    </div>
+    <button class="btn ghost block" id="btnLogout" style="margin-top:8px">Sair</button>
+
+    <p class="small center muted" style="margin-top:14px">
+      Dúvidas sobre cobrança? <a href="mailto:contato@dpopjprotection.com.br">contato@dpopjprotection.com.br</a>
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const msg = params.get("msg");
+  if (msg) $("#msg").textContent = decodeURIComponent(msg);
+
+  // WhatsApp do suporte (ajuste o número conforme necessário).
+  const SUPORTE = "5599999999999";
+  $("#btnWhats").href = "https://wa.me/" + SUPORTE +
+    "?text=" + encodeURIComponent("Olá! Preciso regularizar minha assinatura DPO PJ Protection.");
+
+  $("#btnRetry").addEventListener("click", () => location.replace("/app/"));
+  $("#btnLogout").addEventListener("click", () => {
+    localStorage.removeItem("dpo_token");
+    localStorage.removeItem("dpo_user");
+    location.replace("/");
+  });
+})();
+</script>
+</body>
+</html>

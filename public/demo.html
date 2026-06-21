@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Demonstração — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card card" style="max-width:480px;text-align:center">
+    <div class="brand" style="font-size:22px">DPO PJ <span class="g">Protection</span></div>
+    <p class="muted small" style="margin-top:6px">Ambiente de demonstração</p>
+
+    <div id="loading" style="margin-top:18px">
+      <p class="muted">Preparando seu acesso de demonstração…</p>
+    </div>
+
+    <div id="error" class="hide" style="margin-top:18px">
+      <p style="color:#ff9aa8" id="errMsg">Link inválido.</p>
+      <a class="btn ghost block" href="/checkout.html" style="margin-top:10px">Ver módulos e contratar</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const token = new URLSearchParams(location.search).get("d");
+
+  function showError(m) {
+    $("#loading").classList.add("hide");
+    $("#errMsg").textContent = m || "Link de demonstração inválido ou expirado.";
+    $("#error").classList.remove("hide");
+  }
+
+  if (!token) { showError("Link de demonstração ausente."); return; }
+
+  (async () => {
+    try {
+      const res = await fetch("/api/auth/demo-login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.error || "Não foi possível iniciar a demonstração.");
+      localStorage.setItem("dpo_token", data.token);
+      localStorage.setItem("dpo_user", JSON.stringify(data.user));
+      location.replace("/app/");
+    } catch (e) { showError(e.message); }
+  })();
+})();
+</script>
+</body>
+</html>

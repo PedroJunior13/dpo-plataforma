@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ativar acesso — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card card">
+    <div class="center" style="margin-bottom:14px">
+      <div class="brand" style="font-size:22px">DPO PJ <span class="g">Protection</span></div>
+      <p class="muted small" style="margin-top:6px">Ative seu acesso em 3 passos.</p>
+    </div>
+
+    <!-- STEP 1: criar usuário -->
+    <div id="step-account">
+      <h3>1. Crie seu usuário</h3>
+      <div class="field"><label>Seu nome</label><input id="name" placeholder="Nome completo"></div>
+      <div class="field"><label>E-mail</label><input id="email" type="email" autocomplete="username" placeholder="voce@empresa.com.br"></div>
+      <div class="field"><label>Senha (mín. 8 caracteres)</label><input id="password" type="password" autocomplete="new-password"></div>
+      <button class="btn gold block" id="btnCreate">Criar usuário e continuar</button>
+      <p class="small center muted" style="margin-top:10px">Já tem usuário? <a href="#" id="goLogin">Faça login para ativar</a></p>
+    </div>
+
+    <!-- STEP 1b: login (caso já tenha conta) -->
+    <div id="step-login" class="hide">
+      <h3>Entrar para ativar</h3>
+      <div class="field"><label>E-mail</label><input id="l_email" type="email" autocomplete="username"></div>
+      <div class="field"><label>Senha</label><input id="l_password" type="password" autocomplete="current-password"></div>
+      <button class="btn gold block" id="btnLoginAct">Entrar</button>
+      <p class="small center muted" style="margin-top:10px"><a href="#" id="goCreate">Criar um novo usuário</a></p>
+    </div>
+
+    <!-- STEP 2: ativar com a licença -->
+    <div id="step-activate" class="hide">
+      <h3>2. Confirme sua licença</h3>
+      <p class="muted small">A licença e o token já vêm preenchidos pelo link. Confira e ative.</p>
+      <div class="field"><label>Licença</label><input id="lic" class="mono" placeholder="DPO-XXXX-XXXX-XXXX"></div>
+      <div class="field"><label>Token de ativação</label><input id="tok" class="mono" placeholder="token"></div>
+      <button class="btn gold block" id="btnActivate">Ativar meu acesso</button>
+    </div>
+
+    <!-- STEP 3: sucesso -->
+    <div id="step-done" class="hide center">
+      <div style="font-size:42px">✅</div>
+      <h2>Acesso liberado!</h2>
+      <p class="muted">Seu módulo está ativo. Você já pode entrar na plataforma.</p>
+      <a class="btn gold block" href="/app/">Entrar na plataforma</a>
+    </div>
+
+    <p id="err" class="small center hide" style="color:#ff9aa8;margin-top:12px"></p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const presetLic = (params.get("lic") || "").trim();
+  const presetTok = (params.get("t") || "").trim();
+
+  function step(name) { ["account", "login", "activate", "done"].forEach((s) => $("#step-" + s).classList.toggle("hide", s !== name)); }
+  function showErr(m) { const e = $("#err"); e.textContent = m; e.classList.remove("hide"); }
+  function clearErr() { $("#err").classList.add("hide"); }
+  function setToken(d) { localStorage.setItem("dpo_token", d.token); localStorage.setItem("dpo_user", JSON.stringify(d.user)); }
+
+  // Preenche a licença vinda do link.
+  $("#lic").value = presetLic; $("#tok").value = presetTok;
+
+  // Se já está logado, pula direto para ativação.
+  const t = localStorage.getItem("dpo_token");
+  const u = JSON.parse(localStorage.getItem("dpo_user") || "null");
+  if (t && u) {
+    if (u.tenant_id) { step("done"); } // já tem ambiente
+    else step("activate");
+  } else step("account");
+
+  $("#goLogin").addEventListener("click", (e) => { e.preventDefault(); clearErr(); step("login"); });
+  $("#goCreate").addEventListener("click", (e) => { e.preventDefault(); clearErr(); step("account"); });
+
+  async function post(path, body, token) {
+    const res = await fetch("/api" + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { "Authorization": "Bearer " + token } : {}) },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.error || "Erro.");
+    return data;
+  }
+
+  // Criar usuário
+  $("#btnCreate").addEventListener("click", async () => {
+    clearErr();
+    const b = $("#btnCreate"); b.disabled = true; b.textContent = "Criando…";
+    try {
+      const d = await post("/auth/signup", { name: $("#name").value.trim(), email: $("#email").value.trim(), password: $("#password").value });
+      setToken(d); step("activate");
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Criar usuário e continuar"; }
+  });
+
+  // Login para ativar
+  $("#btnLoginAct").addEventListener("click", async () => {
+    clearErr();
+    const b = $("#btnLoginAct"); b.disabled = true; b.textContent = "Entrando…";
+    try {
+      const d = await post("/auth/login", { email: $("#l_email").value.trim(), password: $("#l_password").value });
+      setToken(d);
+      if (d.user.tenant_id) step("done"); else step("activate");
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Entrar"; }
+  });
+
+  // Ativar com a licença
+  $("#btnActivate").addEventListener("click", async () => {
+    clearErr();
+    const b = $("#btnActivate"); b.disabled = true; b.textContent = "Ativando…";
+    try {
+      const token = localStorage.getItem("dpo_token");
+      const d = await post("/auth/activate", { licenseKey: $("#lic").value.trim(), activationToken: $("#tok").value.trim() }, token);
+      setToken(d); step("done");
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Ativar meu acesso"; }
+  });
+})();
+</script>
+</body>
+</html>
