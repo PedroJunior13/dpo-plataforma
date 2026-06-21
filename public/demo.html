@@ -36,20 +36,25 @@
     $("#error").classList.remove("hide");
   }
 
-  if (!token) { showError("Link de demonstração ausente."); return; }
-
+  // O ambiente de consultoria (/app/) é um sandbox completo e autossuficiente
+  // (roda 100% no navegador). A sessão de servidor abaixo é apenas para
+  // PERSONALIZAR o nome do visitante — por isso é "melhor esforço": com ou sem
+  // ela, o link SEMPRE abre o ambiente completo, igual à demonstração anterior.
   (async () => {
-    try {
-      const res = await fetch("/api/auth/demo-login", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok === false) throw new Error(data.error || "Não foi possível iniciar a demonstração.");
-      localStorage.setItem("dpo_token", data.token);
-      localStorage.setItem("dpo_user", JSON.stringify(data.user));
-      location.replace("/app/");
-    } catch (e) { showError(e.message); }
+    if (token) {
+      try {
+        const res = await fetch("/api/auth/demo-login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok !== false && data.token) {
+          localStorage.setItem("dpo_token", data.token);
+          localStorage.setItem("dpo_user", JSON.stringify(data.user));
+        }
+      } catch (e) { /* segue mesmo assim — o ambiente é autossuficiente */ }
+    }
+    location.replace("/app/");
   })();
 })();
 </script>

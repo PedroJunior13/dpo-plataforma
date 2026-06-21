@@ -314,3 +314,77 @@ ON CONFLICT (id) DO UPDATE SET status='active', is_owner=TRUE, plan_id='owner';
 INSERT INTO users (tenant_id, email, name, role, active)
 VALUES ('00000000-0000-0000-0000-000000000001', 'pedrobj@gmail.com', 'Pedro (Dono)', 'OWNER', TRUE)
 ON CONFLICT (email) DO UPDATE SET role='OWNER', active=TRUE;
+
+-- =====================================================================
+--  SECAO 12 — CRM (area negocial do dono)
+--  Funil de vendas + atividades de relacionamento + campanhas de
+--  fidelizacao. Tudo idempotente (CREATE TABLE IF NOT EXISTS).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS crm_contacts (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id       UUID REFERENCES tenants(id) ON DELETE SET NULL, -- vira cliente => liga ao tenant
+  name            TEXT NOT NULL,
+  company         TEXT,
+  doc             TEXT,                  -- CNPJ/CPF (so digitos)
+  email           TEXT,
+  phone           TEXT,
+  source          TEXT DEFAULT 'manual', -- manual|checkout|indicacao|site|importacao
+  stage           TEXT NOT NULL DEFAULT 'lead'
+                  CHECK (stage IN ('lead','contato','proposta','ganho','perdido','cliente')),
+  plan_interest   TEXT REFERENCES plans(id) ON DELETE SET NULL,
+  value_cents     INTEGER NOT NULL DEFAULT 0,
+  owner_email     TEXT,
+  notes           TEXT,
+  tags            TEXT,                  -- csv simples
+  last_contact_at TIMESTAMPTZ,
+  next_action_at  TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_crm_contacts_stage   ON crm_contacts(stage);
+CREATE INDEX IF NOT EXISTS idx_crm_contacts_tenant  ON crm_contacts(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_crm_contacts_next    ON crm_contacts(next_action_at);
+
+CREATE TABLE IF NOT EXISTS crm_activities (
+  id          BIGSERIAL PRIMARY KEY,
+  contact_id  UUID NOT NULL REFERENCES crm_contacts(id) ON DELETE CASCADE,
+  type        TEXT NOT NULL DEFAULT 'nota'
+              CHECK (type IN ('nota','ligacao','email','whatsapp','reuniao','estagio','campanha')),
+  body        TEXT,
+  actor_email TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_crm_activities_contact ON crm_activities(contact_id);
+
+CREATE TABLE IF NOT EXISTS crm_campaigns (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         TEXT NOT NULL,
+  channel      TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp','email')),
+  audience     TEXT NOT NULL DEFAULT 'todos',   -- todos|lead|cliente|<stage>
+  message      TEXT,
+  status       TEXT NOT NULL DEFAULT 'rascunho' CHECK (status IN ('rascunho','enviada')),
+  sent_count   INTEGER NOT NULL DEFAULT 0,
+  scheduled_at TIMESTAMPTZ,
+  sent_at      TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- =====================================================================
+--  SECAO 13 — Seguranca (anti-invasao / brute force) + suporte
+--  Bloqueio de login por tentativas e auditoria de acesso de suporte.
+-- =====================================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_logins INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until  TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_ip TEXT;
+
+-- Registro de acessos de suporte do dono ao ambiente de um cliente.
+CREATE TABLE IF NOT EXISTS support_sessions (
+  id          BIGSERIAL PRIMARY KEY,
+  owner_email TEXT NOT NULL,
+  tenant_id   UUID REFERENCES tenants(id) ON DELETE CASCADE,
+  reason      TEXT,
+  ip          TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_support_sessions_tenant ON support_sessions(tenant_id);

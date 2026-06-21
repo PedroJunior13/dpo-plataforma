@@ -5,7 +5,8 @@
 import { sql, one } from "./lib/db.js";
 import {
   hashPassword, verifyPassword, makeToken, userFromRequest, isOwner, uuid,
-  makeMfaChallenge, verifyMfaChallenge,
+  makeMfaChallenge, verifyMfaChallenge, makeSupportToken,
+  isLocked, lockMinutesLeft, MAX_FAILED_LOGINS, LOCKOUT_MINUTES,
 } from "./lib/auth.js";
 import {
   json, ok, fail, unauthorized, forbidden, paymentRequired, readJson, clientIp, routePath,
@@ -91,14 +92,36 @@ async function listPlans() {
 async function login(req) {
   const { email, password } = await readJson(req);
   const u = await one(sql`SELECT * FROM users WHERE lower(email)=lower(${email || ""})`);
-  if (!u || !u.password_hash || !verifyPassword(password || "", u.password_hash))
+  // Resposta generica p/ usuario inexistente (nao revela se o e-mail existe).
+  if (!u || !u.password_hash) return fail("E-mail ou senha invalidos.", 401);
+  // Anti brute-force: conta travada temporariamente.
+  if (isLocked(u)) {
+    return fail(`Muitas tentativas. Tente novamente em ${lockMinutesLeft(u)} min.`, 429, { code: "LOCKED" });
+  }
+  if (!verifyPassword(password || "", u.password_hash)) {
+    await registerFailedLogin(u, req);
     return fail("E-mail ou senha invalidos.", 401);
+  }
   if (!u.active) return forbidden("Usuario inativo.");
+  // Sucesso: zera contador de falhas.
+  await sql`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=${u.id}`;
   // 2FA: se habilitado, devolve um desafio curto em vez do token de sessao.
   if (u.mfa_enabled && u.mfa_secret) {
     return ok({ mfaRequired: true, mfaToken: await makeMfaChallenge(u) });
   }
   return finishLogin(u, req);
+}
+
+// Incrementa o contador de falhas e trava a conta ao atingir o limite.
+async function registerFailedLogin(u, req) {
+  const n = (u.failed_logins || 0) + 1;
+  if (n >= MAX_FAILED_LOGINS) {
+    const until = new Date(Date.now() + LOCKOUT_MINUTES * 60000).toISOString();
+    await sql`UPDATE users SET failed_logins=${n}, locked_until=${until} WHERE id=${u.id}`;
+    await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login_locked", detail: { attempts: n }, ip: clientIp(req) });
+  } else {
+    await sql`UPDATE users SET failed_logins=${n} WHERE id=${u.id}`;
+  }
 }
 
 async function mfaVerify(req) {
@@ -113,8 +136,9 @@ async function mfaVerify(req) {
 }
 
 async function finishLogin(u, req) {
-  await sql`UPDATE users SET last_login=now() WHERE id=${u.id}`;
-  await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login", ip: clientIp(req) });
+  const ip = clientIp(req);
+  await sql`UPDATE users SET last_login=now(), last_login_at=now(), last_login_ip=${ip}, failed_logins=0, locked_until=NULL WHERE id=${u.id}`;
+  await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login", ip });
   return ok({ token: await makeToken(u), user: pubUser(u) });
 }
 
@@ -128,31 +152,45 @@ async function demoLogin(req) {
 }
 
 // Cadastro do cliente (cria usuario SEM tenant; vincula na ativacao).
+// 2FA e configurado logo apos (obrigatorio) e a licenca e inserida em seguida,
+// de modo que o usuario cai exatamente no perfil (tenant) da licenca.
 async function signup(req) {
-  const { email, password, name } = await readJson(req);
+  const body = await readJson(req);
+  const email = String(body.email || "").trim().toLowerCase();
+  const name = String(body.name || "").trim();
+  const password = String(body.password || "");
   if (!email || !password) return fail("Informe e-mail e senha.");
-  if (String(password).length < 8) return fail("A senha deve ter ao menos 8 caracteres.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail("E-mail invalido.");
+  if (password.length < 8) return fail("A senha deve ter ao menos 8 caracteres.");
   const exists = await one(sql`SELECT id FROM users WHERE lower(email)=lower(${email})`);
-  if (exists) return fail("Ja existe um usuario com este e-mail.", 409);
+  if (exists) return fail("Ja existe um usuario com este e-mail. Faca login para ativar.", 409, { code: "EMAIL_EXISTS" });
   const u = await one(sql`
     INSERT INTO users (email, password_hash, name, role, tenant_id)
-    VALUES (${email}, ${hashPassword(password)}, ${name || ""}, 'ADMIN', NULL)
+    VALUES (${email}, ${hashPassword(password)}, ${name}, 'ADMIN', NULL)
     RETURNING *`);
+  await audit({ tenantId: null, actorEmail: email, action: "signup", ip: clientIp(req) });
   return ok({ token: await makeToken(u), user: pubUser(u) });
 }
 
 // Ativacao com a licenca (destrava o modulo na 1a vez).
+// Seguranca: exige 2FA configurado ANTES de vincular a licenca ao perfil.
 async function activate(req) {
-  const user = await userFromRequest(req);
-  if (!user) return unauthorized("Faca login/cadastro antes de ativar.");
+  const reqUser = await userFromRequest(req);
+  if (!reqUser) return unauthorized("Faca login/cadastro antes de ativar.");
+  const cur = await one(sql`SELECT * FROM users WHERE id=${reqUser.id}`);
+  if (!cur) return unauthorized();
+  if (!cur.active) return forbidden("Usuario inativo.");
+  if (!cur.mfa_enabled) {
+    return fail("Configure a verificacao em duas etapas (2FA) antes de ativar.", 403, { code: "MFA_REQUIRED" });
+  }
   const { licenseKey, activationToken } = await readJson(req);
   const lic = await L.activateLicense({
     licenseKey: (licenseKey || "").trim().toUpperCase(),
     activationToken: (activationToken || "").trim(),
-    user, ip: clientIp(req),
+    user: cur, ip: clientIp(req),
   });
-  const u = await one(sql`SELECT * FROM users WHERE id=${user.id}`);
-  await audit({ tenantId: lic.tenant_id, actorEmail: user.email, action: "license_activated", entity: "license", entityId: lic.id, ip: clientIp(req) });
+  const u = await one(sql`SELECT * FROM users WHERE id=${cur.id}`);
+  await audit({ tenantId: lic.tenant_id, actorEmail: cur.email, action: "license_activated", entity: "license", entityId: lic.id, ip: clientIp(req) });
   return ok({ token: await makeToken(u), license: lic, user: pubUser(u) });
 }
 
@@ -223,7 +261,15 @@ async function checkout(req) {
     VALUES (${t.name}, ${t.email}, ${t.phone || null}, ${t.doc || null}, ${planId}, 'pending')
     RETURNING *`);
 
-  const charge = await billing.createCharge({ gateway, billingType, method, tenant, plan, amountCents: amount });
+  // Tenta o gateway; se NENHUM estiver configurado, segue em modo "manual":
+  // a compra fica registrada (pendente) e o dono gera a licenca em 1 clique.
+  let charge = null, manual = false;
+  try {
+    charge = await billing.createCharge({ gateway, billingType, method, tenant, plan, amountCents: amount });
+  } catch (e) {
+    manual = true;
+    charge = { gateway: "manual", checkoutUrl: null, gatewayRef: null, gatewaySubscriptionId: null };
+  }
 
   const sub = await one(sql`
     INSERT INTO subscriptions (tenant_id, plan_id, billing_type, gateway, gateway_subscription_id, amount_cents, status)
@@ -231,9 +277,44 @@ async function checkout(req) {
     RETURNING *`);
   await sql`INSERT INTO payments (tenant_id, subscription_id, gateway, gateway_payment_id, method, amount_cents, status)
             VALUES (${tenant.id}, ${sub.id}, ${charge.gateway}, ${charge.gatewayRef || charge.gatewaySubscriptionId || null}, ${method}, ${amount}, 'pending')`;
-  await audit({ tenantId: tenant.id, actorEmail: t.email, action: "checkout_created", entity: "subscription", entityId: sub.id, detail: { planId, billingType, amount } });
+  await audit({ tenantId: tenant.id, actorEmail: t.email, action: "checkout_created", entity: "subscription", entityId: sub.id, detail: { planId, billingType, amount, manual } });
 
-  return ok({ checkoutUrl: charge.checkoutUrl, tenantId: tenant.id, subscriptionId: sub.id, amountCents: amount });
+  // Alimenta o CRM (funil) com a intencao de compra — vira "proposta".
+  try { await crmUpsertFromCheckout({ tenant: t, tenantId: tenant.id, planId, amount }); } catch (_) {}
+
+  return ok({
+    checkoutUrl: charge.checkoutUrl, manual,
+    tenantId: tenant.id, subscriptionId: sub.id, amountCents: amount,
+    planName: plan.name,
+    message: manual
+      ? "Pedido registrado! Nossa equipe vai confirmar o pagamento e liberar seu acesso em instantes."
+      : null,
+  });
+}
+
+// Cria/atualiza um contato no CRM a partir de um checkout (funil de vendas).
+async function crmUpsertFromCheckout({ tenant: t, tenantId, planId, amount }) {
+  const doc = (t.doc || "").replace(/\D/g, "") || null;
+  const existing = await one(sql`
+    SELECT * FROM crm_contacts
+    WHERE (email IS NOT NULL AND lower(email)=lower(${t.email}))
+       OR (${doc}::text IS NOT NULL AND doc=${doc})
+    ORDER BY created_at DESC LIMIT 1`);
+  if (existing) {
+    await sql`UPDATE crm_contacts SET tenant_id=${tenantId}, stage='proposta', plan_interest=${planId},
+      value_cents=${amount}, company=coalesce(${t.name}, company), phone=coalesce(${t.phone || null}, phone),
+      doc=coalesce(${doc}, doc), last_contact_at=now(), updated_at=now() WHERE id=${existing.id}`;
+    await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email)
+      VALUES (${existing.id}, 'campanha', ${'Nova compra via checkout: ' + planId}, 'checkout')`;
+    return existing.id;
+  }
+  const c = await one(sql`
+    INSERT INTO crm_contacts (tenant_id, name, company, doc, email, phone, source, stage, plan_interest, value_cents)
+    VALUES (${tenantId}, ${t.name}, ${t.name}, ${doc}, ${t.email}, ${t.phone || null}, 'checkout', 'proposta', ${planId}, ${amount})
+    RETURNING id`);
+  await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email)
+    VALUES (${c.id}, 'campanha', ${'Lead criado via checkout: ' + planId}, 'checkout')`;
+  return c.id;
 }
 
 // =====================================================================
@@ -290,10 +371,12 @@ async function ownerRoutes(req, user, seg, method) {
   // ---- LICENCAS ----
   if (r === "licenses" && method === "GET") {
     const rows = await sql`
-      SELECT l.*, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone, p.name AS plan_name
+      SELECT l.*, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
+             t.status AS tenant_status, t.client_quota_override, p.name AS plan_name, p.tier AS plan_tier,
+             (SELECT count(*)::int FROM clients c WHERE c.tenant_id=t.id) AS clients_count
       FROM licenses l JOIN tenants t ON t.id=l.tenant_id LEFT JOIN plans p ON p.id=l.plan_id
       ORDER BY l.created_at DESC LIMIT 300`;
-    return ok({ licenses: rows.map(decorate) });
+    return ok({ licenses: rows.map(decorate), plans: await sql`SELECT id,name,tier,client_quota FROM plans WHERE id<>'owner' ORDER BY tier` });
   }
   if (r === "licenses" && method === "POST") {
     const b = await readJson(req);
@@ -334,7 +417,37 @@ async function ownerRoutes(req, user, seg, method) {
   if (seg[1] === "licenses" && seg[2] && seg[3] === "revoke" && method === "POST")
     return ok({ license: await L.revokeLicense(seg[2], user) });
 
-  // ---- PAGAMENTOS / NOTAS / AUDITORIA ----
+  // Ativar / Inativar cliente (inadimplencia ou desativacao manual).
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "active" && method === "POST") {
+    const b = await readJson(req);
+    const t = await L.setTenantActive({ tenantId: seg[2], active: !!b.active, actor: user, reason: b.reason });
+    await audit({ tenantId: seg[2], actorEmail: user.email, action: b.active ? "tenant_reactivated" : "tenant_inactivated", entity: "tenant", entityId: seg[2], detail: { reason: b.reason || null }, ip: clientIp(req) });
+    return ok({ tenant: t, status: await L.tenantStatusInfo(t) });
+  }
+  // Acesso de suporte: gera token de impersonacao (dono opera no ambiente do cliente).
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "support" && method === "POST") {
+    const b = await readJson(req).catch(() => ({}));
+    const t = await one(sql`SELECT * FROM tenants WHERE id=${seg[2]}`);
+    if (!t) return fail("Cliente nao encontrado.", 404);
+    const token = await makeSupportToken(user, t.id);
+    await sql`INSERT INTO support_sessions (owner_email, tenant_id, reason, ip) VALUES (${user.email}, ${t.id}, ${b?.reason || null}, ${clientIp(req)})`;
+    await audit({ tenantId: t.id, actorEmail: user.email, action: "support_access", entity: "tenant", entityId: t.id, detail: { reason: b?.reason || null }, ip: clientIp(req) });
+    return ok({ token, tenant: pubTenant(t), link: `/app/?support=${encodeURIComponent(token)}` });
+  }
+  // Regenerar acesso (novo token de ativacao) e resetar MFA — suporte.
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "regen" && method === "POST") {
+    const res = await L.regenerateActivation({ tenantId: seg[2], actor: user });
+    await audit({ tenantId: seg[2], actorEmail: user.email, action: "access_regenerated", entity: "tenant", entityId: seg[2], ip: clientIp(req) });
+    const t = await one(sql`SELECT phone FROM tenants WHERE id=${seg[2]}`);
+    return ok({ link: res.link, message: res.message, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
+  }
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "reset-mfa" && method === "POST") {
+    await L.resetTenantMfa({ tenantId: seg[2], actor: user });
+    await audit({ tenantId: seg[2], actorEmail: user.email, action: "mfa_reset_by_support", entity: "tenant", entityId: seg[2], ip: clientIp(req) });
+    return ok({ ok: true });
+  }
+
+  // ---- PAGAMENTOS / NOTAS ----
   if (r === "payments" && method === "GET") {
     const rows = await sql`SELECT p.*, t.name AS tenant_name FROM payments p JOIN tenants t ON t.id=p.tenant_id ORDER BY p.created_at DESC LIMIT 200`;
     return ok({ payments: rows });
@@ -343,25 +456,54 @@ async function ownerRoutes(req, user, seg, method) {
     if (!nfse.enabled()) return fail("NFS-e nao configurada (FOCUSNFE_TOKEN).", 400);
     return ok(await nfse.issueForPayment(seg[2]));
   }
-  if (r === "audit" && method === "GET") {
-    const rows = await sql`SELECT * FROM license_events ORDER BY created_at DESC LIMIT 300`;
-    return ok({ events: rows });
+
+  // ---- COMPRAS (transacoes do checkout que chegam ao painel) ----
+  // Cada compra traz toda a informacao da transacao + o modulo escolhido,
+  // com botao "Gerar licenca" (1 clique) inerente ao modulo comprado.
+  if (r === "purchases" && method === "GET") {
+    const rows = await sql`
+      SELECT s.id AS subscription_id, s.status AS sub_status, s.billing_type, s.gateway,
+             s.amount_cents, s.created_at, s.plan_id,
+             t.id AS tenant_id, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
+             t.doc AS tenant_doc, t.status AS tenant_status, p.name AS plan_name, p.tier AS plan_tier,
+             p.client_quota,
+             (SELECT pay.method FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS method,
+             (SELECT pay.status FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS pay_status,
+             EXISTS(SELECT 1 FROM licenses l WHERE l.tenant_id=t.id) AS has_license
+      FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
+      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`;
+    return ok({ purchases: rows });
+  }
+  // Gera a licenca inerente ao modulo comprado, a partir da assinatura.
+  if (seg[1] === "purchases" && seg[2] && seg[3] === "issue" && method === "POST") {
+    const sub = await one(sql`SELECT * FROM subscriptions WHERE id=${seg[2]}`);
+    if (!sub) return fail("Compra nao encontrada.", 404);
+    const exists = await one(sql`SELECT id FROM licenses WHERE tenant_id=${sub.tenant_id} ORDER BY created_at DESC LIMIT 1`);
+    if (exists) return fail("Este cliente ja possui licenca. Gerencie em Licencas.", 409, { code: "ALREADY_LICENSED" });
+    const res = await L.issueLicense({
+      tenantId: sub.tenant_id, planId: sub.plan_id, billingType: sub.billing_type || "monthly",
+      subscriptionId: sub.id, actor: user,
+    });
+    // Marca a assinatura como ativa (pagamento confirmado manualmente) e CRM => cliente.
+    await sql`UPDATE subscriptions SET status='active' WHERE id=${sub.id}`;
+    await sql`UPDATE crm_contacts SET stage='cliente', updated_at=now() WHERE tenant_id=${sub.tenant_id}`;
+    await audit({ tenantId: sub.tenant_id, actorEmail: user.email, action: "license_issued_from_purchase", entity: "license", entityId: res.license.id, detail: { subscriptionId: sub.id, planId: sub.plan_id }, ip: clientIp(req) });
+    const t = await one(sql`SELECT phone FROM tenants WHERE id=${sub.tenant_id}`);
+    return ok({ license: res.license, plan: res.plan, link: res.link, message: res.message, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
   }
 
-  // ---- MEUS CLIENTES (consultoria do dono; tenant do proprio dono, ilimitado) ----
-  if (r === "clients" && method === "GET") {
-    const rows = await sql`SELECT * FROM clients WHERE tenant_id=${user.tenant_id} ORDER BY created_at DESC`;
-    return ok({ clients: rows, used: rows.length, quota: null });
+  // ---- AUDITORIA (trilha completa da area negocial: eventos + audit_log) ----
+  if (r === "audit" && method === "GET") {
+    const events = await sql`SELECT 'license' AS kind, id::text AS id, created_at, event AS action, actor_email, tenant_id, note AS detail
+                             FROM license_events ORDER BY created_at DESC LIMIT 200`;
+    const logs = await sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail
+                           FROM audit_log ORDER BY created_at DESC LIMIT 200`;
+    const merged = [...events, ...logs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 300);
+    return ok({ events: merged });
   }
-  if (r === "clients" && method === "POST") {
-    const b = await readJson(req);
-    if (!b.name) return fail("Informe o nome do cliente.");
-    const c = await one(sql`INSERT INTO clients (tenant_id, name, cnpj, slug, sector, contact_name, contact_email, phase, status)
-      VALUES (${user.tenant_id}, ${b.name}, ${b.cnpj || null}, ${b.slug || null}, ${b.sector || null},
-              ${b.contactName || null}, ${b.contactEmail || null}, ${b.phase || "diagnostico"}, ${b.status || "ativo"}) RETURNING *`);
-    await audit({ tenantId: user.tenant_id, actorEmail: user.email, action: "client_created", entity: "client", entityId: c.id });
-    return ok({ client: c });
-  }
+
+  // ---- CRM (funil de vendas + atividades + campanhas de fidelizacao) ----
+  if (seg[1] === "crm") return ownerCrmRoutes(req, user, seg.slice(2), method);
 
   // ---- DEMONSTRACAO ----
   if (r === "demo" && method === "GET") {
@@ -379,13 +521,161 @@ async function ownerRoutes(req, user, seg, method) {
 
 function decorate(lic) { return { ...lic, activation_link: L.activationLink(lic) }; }
 
+// =====================================================================
+//  CRM — funil de vendas, atividades e campanhas de fidelizacao
+//  cseg = caminho apos "owner/crm/" (ex.: ["contacts","<id>","activity"])
+// =====================================================================
+const CRM_STAGES = ["lead", "contato", "proposta", "ganho", "perdido", "cliente"];
+async function ownerCrmRoutes(req, user, cseg, method) {
+  const head = cseg[0] || "";
+
+  // ---- Indicadores do funil (para o dashboard do CRM) ----
+  if (head === "stats" && method === "GET") {
+    const byStage = await sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value
+      FROM crm_contacts GROUP BY stage`;
+    const totals = await one(sql`SELECT
+      (SELECT count(*)::int FROM crm_contacts) AS contacts,
+      (SELECT count(*)::int FROM crm_contacts WHERE stage='cliente') AS clients,
+      (SELECT count(*)::int FROM crm_contacts WHERE next_action_at IS NOT NULL AND next_action_at < now() + interval '3 days') AS due_soon,
+      (SELECT count(*)::int FROM crm_campaigns) AS campaigns`);
+    const map = {}; CRM_STAGES.forEach(s => map[s] = { n: 0, value: 0 });
+    byStage.forEach(r => { map[r.stage] = { n: r.n, value: r.value }; });
+    const won = map.ganho.n + map.cliente.n;
+    const conversion = totals.contacts ? Math.round((won / totals.contacts) * 100) : 0;
+    return ok({ byStage: map, totals, conversion, stages: CRM_STAGES });
+  }
+
+  // ---- Auto-preenchimento por CNPJ (BrasilAPI — gratuita, sem chave) ----
+  if (head === "cnpj" && cseg[1] && method === "GET") {
+    const doc = (cseg[1] || "").replace(/\D/g, "");
+    if (doc.length !== 14) return fail("CNPJ invalido.");
+    try {
+      const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`);
+      if (!r.ok) return fail("CNPJ nao encontrado.", 404);
+      const d = await r.json();
+      return ok({ company: {
+        name: d.razao_social || d.nome_fantasia || "",
+        fantasy: d.nome_fantasia || "",
+        email: d.email || "",
+        phone: d.ddd_telefone_1 || "",
+        city: d.municipio || "", uf: d.uf || "",
+      } });
+    } catch (_) { return fail("Consulta de CNPJ indisponivel no momento.", 502); }
+  }
+
+  // ---- CONTATOS ----
+  if (head === "contacts" && !cseg[1] && method === "GET") {
+    const stage = new URL(req.url).searchParams.get("stage");
+    const rows = stage
+      ? await sql`SELECT * FROM crm_contacts WHERE stage=${stage} ORDER BY updated_at DESC LIMIT 500`
+      : await sql`SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 500`;
+    return ok({ contacts: rows });
+  }
+  if (head === "contacts" && !cseg[1] && method === "POST") {
+    const b = await readJson(req);
+    if (!b.name) return fail("Informe o nome do contato.");
+    const doc = (b.doc || "").replace(/\D/g, "") || null;
+    const stage = CRM_STAGES.includes(b.stage) ? b.stage : "lead";
+    const c = await one(sql`INSERT INTO crm_contacts
+      (name, company, doc, email, phone, source, stage, plan_interest, value_cents, owner_email, notes, tags, next_action_at)
+      VALUES (${b.name}, ${b.company || null}, ${doc}, ${b.email || null}, ${b.phone || null},
+              ${b.source || "manual"}, ${stage}, ${b.planInterest || null}, ${b.valueCents || 0},
+              ${user.email}, ${b.notes || null}, ${b.tags || null}, ${b.nextActionAt || null}) RETURNING *`);
+    await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email) VALUES (${c.id}, 'nota', 'Contato criado.', ${user.email})`;
+    await audit({ actorEmail: user.email, action: "crm_contact_created", entity: "crm_contact", entityId: c.id });
+    return ok({ contact: c });
+  }
+  if (head === "contacts" && cseg[1] && !cseg[2] && method === "GET") {
+    const c = await one(sql`SELECT * FROM crm_contacts WHERE id=${cseg[1]}`);
+    if (!c) return fail("Contato nao encontrado.", 404);
+    const activities = await sql`SELECT * FROM crm_activities WHERE contact_id=${c.id} ORDER BY created_at DESC LIMIT 100`;
+    return ok({ contact: c, activities });
+  }
+  if (head === "contacts" && cseg[1] && !cseg[2] && method === "POST") {
+    const b = await readJson(req);
+    const doc = b.doc != null ? ((b.doc || "").replace(/\D/g, "") || null) : undefined;
+    const c = await one(sql`UPDATE crm_contacts SET
+      name=coalesce(${b.name || null}, name), company=${b.company ?? null}, email=${b.email ?? null},
+      phone=${b.phone ?? null}, doc=coalesce(${doc ?? null}, doc),
+      plan_interest=${b.planInterest ?? null}, value_cents=coalesce(${b.valueCents ?? null}, value_cents),
+      notes=${b.notes ?? null}, tags=${b.tags ?? null}, next_action_at=${b.nextActionAt ?? null},
+      updated_at=now() WHERE id=${cseg[1]} RETURNING *`);
+    if (!c) return fail("Contato nao encontrado.", 404);
+    return ok({ contact: c });
+  }
+  // Mover de estagio no funil (registra atividade).
+  if (head === "contacts" && cseg[1] && cseg[2] === "stage" && method === "POST") {
+    const b = await readJson(req);
+    if (!CRM_STAGES.includes(b.stage)) return fail("Estagio invalido.");
+    const c = await one(sql`UPDATE crm_contacts SET stage=${b.stage}, last_contact_at=now(), updated_at=now() WHERE id=${cseg[1]} RETURNING *`);
+    if (!c) return fail("Contato nao encontrado.", 404);
+    await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email) VALUES (${c.id}, 'estagio', ${'Movido para: ' + b.stage}, ${user.email})`;
+    await audit({ actorEmail: user.email, action: "crm_stage_changed", entity: "crm_contact", entityId: c.id, detail: { stage: b.stage } });
+    return ok({ contact: c });
+  }
+  // Registrar atividade (nota/ligacao/email/whatsapp/reuniao).
+  if (head === "contacts" && cseg[1] && cseg[2] === "activity" && method === "POST") {
+    const b = await readJson(req);
+    const types = ["nota", "ligacao", "email", "whatsapp", "reuniao", "campanha"];
+    const type = types.includes(b.type) ? b.type : "nota";
+    const a = await one(sql`INSERT INTO crm_activities (contact_id, type, body, actor_email)
+      VALUES (${cseg[1]}, ${type}, ${b.body || null}, ${user.email}) RETURNING *`);
+    await sql`UPDATE crm_contacts SET last_contact_at=now(), next_action_at=${b.nextActionAt ?? null}, updated_at=now() WHERE id=${cseg[1]}`;
+    return ok({ activity: a });
+  }
+
+  // ---- CAMPANHAS (fidelizacao/retencao) ----
+  if (head === "campaigns" && !cseg[1] && method === "GET") {
+    const rows = await sql`SELECT * FROM crm_campaigns ORDER BY created_at DESC LIMIT 100`;
+    return ok({ campaigns: rows });
+  }
+  if (head === "campaigns" && !cseg[1] && method === "POST") {
+    const b = await readJson(req);
+    if (!b.name || !b.message) return fail("Informe nome e mensagem da campanha.");
+    const channel = b.channel === "email" ? "email" : "whatsapp";
+    const c = await one(sql`INSERT INTO crm_campaigns (name, channel, audience, message, scheduled_at)
+      VALUES (${b.name}, ${channel}, ${b.audience || "todos"}, ${b.message}, ${b.scheduledAt || null}) RETURNING *`);
+    await audit({ actorEmail: user.email, action: "crm_campaign_created", entity: "crm_campaign", entityId: c.id });
+    return ok({ campaign: c });
+  }
+  // Disparo da campanha: monta os destinatarios + links prontos (wa.me / mailto).
+  // Sem custo de API: o dono dispara em 1 clique pelos links gerados.
+  if (head === "campaigns" && cseg[1] && cseg[2] === "send" && method === "POST") {
+    const camp = await one(sql`SELECT * FROM crm_campaigns WHERE id=${cseg[1]}`);
+    if (!camp) return fail("Campanha nao encontrada.", 404);
+    const aud = camp.audience || "todos";
+    const contacts = aud === "todos"
+      ? await sql`SELECT * FROM crm_contacts WHERE phone IS NOT NULL OR email IS NOT NULL`
+      : await sql`SELECT * FROM crm_contacts WHERE stage=${aud} AND (phone IS NOT NULL OR email IS NOT NULL)`;
+    const recipients = contacts.map(c => {
+      const msg = camp.message.replace(/\{nome\}/gi, c.name || "").replace(/\{empresa\}/gi, c.company || "");
+      return {
+        id: c.id, name: c.name, phone: c.phone, email: c.email,
+        whatsapp: c.phone ? waLink(c.phone, msg) : null,
+        mailto: c.email ? `mailto:${c.email}?subject=${encodeURIComponent(camp.name)}&body=${encodeURIComponent(msg)}` : null,
+      };
+    });
+    await sql`UPDATE crm_campaigns SET status='enviada', sent_count=${recipients.length}, sent_at=now() WHERE id=${camp.id}`;
+    for (const c of contacts) {
+      await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email) VALUES (${c.id}, 'campanha', ${'Campanha: ' + camp.name}, ${user.email})`;
+    }
+    await audit({ actorEmail: user.email, action: "crm_campaign_sent", entity: "crm_campaign", entityId: camp.id, detail: { recipients: recipients.length } });
+    return ok({ recipients, sentCount: recipients.length });
+  }
+
+  return fail("Rota de CRM nao encontrada: " + cseg.join("/"), 404);
+}
+
 async function ownerDashboard() {
   const totals = await one(sql`SELECT
     (SELECT count(*)::int FROM tenants WHERE is_owner=FALSE) AS tenants,
-    (SELECT count(*)::int FROM tenants WHERE status='active') AS active,
+    (SELECT count(*)::int FROM tenants WHERE status='active' AND is_owner=FALSE) AS active,
     (SELECT count(*)::int FROM tenants WHERE status IN ('suspended','blocked')) AS blocked,
     (SELECT count(*)::int FROM licenses WHERE status='active') AS active_licenses,
-    (SELECT count(*)::int FROM licenses WHERE status='issued') AS pending_activation`);
+    (SELECT count(*)::int FROM licenses WHERE status='issued') AS pending_activation,
+    (SELECT count(*)::int FROM clients c JOIN tenants t ON t.id=c.tenant_id WHERE t.is_owner=FALSE) AS clients_managed,
+    (SELECT count(*)::int FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id
+       WHERE t.is_owner=FALSE AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS pending_purchases`);
   const mrr = await one(sql`SELECT coalesce(sum(amount_cents),0)::int AS cents FROM subscriptions WHERE status='active'`);
   const overdue = await sql`
     SELECT t.id, t.name, t.email, t.phone, t.status, s.current_period_end, s.billing_type, p.name AS plan_name
@@ -393,9 +683,29 @@ async function ownerDashboard() {
     WHERE t.is_owner=FALSE AND s.current_period_end IS NOT NULL
       AND s.current_period_end < now() + interval '7 days'
     ORDER BY s.current_period_end ASC LIMIT 50`;
-  const byPlan = await sql`SELECT t.plan_id, p.name, count(*)::int AS n FROM tenants t LEFT JOIN plans p ON p.id=t.plan_id
-    WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name ORDER BY t.plan_id`;
-  return ok({ totals, mrrCents: mrr.cents, overdue, byPlan, nfseEnabled: nfse.enabled(), gateways: billing.availableGateways() });
+  // Distribuicao por modulo + receita ativa por modulo (area negocial).
+  const byPlan = await sql`SELECT t.plan_id, p.name, p.tier, count(*)::int AS n,
+      coalesce(sum(CASE WHEN sub.status='active' THEN sub.amount_cents ELSE 0 END),0)::int AS revenue
+    FROM tenants t LEFT JOIN plans p ON p.id=t.plan_id
+    LEFT JOIN LATERAL (SELECT amount_cents, status FROM subscriptions s WHERE s.tenant_id=t.id ORDER BY created_at DESC LIMIT 1) sub ON TRUE
+    WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`;
+  // Status das licencas (para grafico de rosca/barras em CSS).
+  const licStatus = await sql`SELECT status, count(*)::int AS n FROM licenses GROUP BY status`;
+  // Funil do CRM (resumo).
+  const crmFunnel = await sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value FROM crm_contacts GROUP BY stage`;
+  // Receita aprovada nos ultimos 6 meses (serie para mini-grafico de barras).
+  const revenue = await sql`
+    SELECT to_char(date_trunc('month', coalesce(paid_at, created_at)), 'YYYY-MM') AS ym,
+           coalesce(sum(amount_cents),0)::int AS cents
+    FROM payments WHERE status='approved' AND coalesce(paid_at, created_at) > now() - interval '6 months'
+    GROUP BY 1 ORDER BY 1`;
+  // Atividade recente (trilha de auditoria resumida).
+  const recent = await sql`SELECT created_at, action, actor_email, tenant_id FROM audit_log ORDER BY created_at DESC LIMIT 8`;
+  return ok({
+    totals, mrrCents: mrr.cents, overdue, byPlan,
+    licStatus, crmFunnel, revenue, recent,
+    nfseEnabled: nfse.enabled(), gateways: billing.availableGateways(),
+  });
 }
 
 // =====================================================================

@@ -175,6 +175,74 @@ export async function setQuotaOverride({ tenantId, quota, actor }) {
 }
 
 // ---------------------------------------------------------------
+//  Ativo / Inativo do CLIENTE (inadimplencia ou desativacao manual)
+//  active=false  => tenant 'suspended' + licenca 'suspended' (kill-switch corta)
+//  active=true   => tenant 'active'    + licenca 'active'
+// ---------------------------------------------------------------
+export async function setTenantActive({ tenantId, active, actor, reason }) {
+  const tenant = await one(sql`SELECT * FROM tenants WHERE id=${tenantId}`);
+  if (!tenant) throw new Error("Tenant nao encontrado.");
+  if (tenant.is_owner) throw new Error("O ambiente do dono nao pode ser desativado.");
+  const newTenant = active ? "active" : "suspended";
+  await sql`UPDATE tenants SET status=${newTenant}, updated_at=now() WHERE id=${tenantId}`;
+  // Acompanha a licenca mais recente (se houver).
+  const lic = await one(sql`
+    SELECT * FROM licenses WHERE tenant_id=${tenantId}
+    AND status IN ('active','suspended','issued') ORDER BY created_at DESC LIMIT 1`);
+  if (lic) {
+    const newLic = active ? "active" : "suspended";
+    await sql`UPDATE licenses SET status=${newLic}, version=version+1, updated_at=now() WHERE id=${lic.id}`;
+    await licenseEvent({
+      licenseId: lic.id, tenantId, event: active ? "reactivated" : "suspended",
+      actorEmail: actor?.email, before: { status: lic.status }, after: { status: newLic },
+      note: reason || (active ? "Cliente reativado pelo dono." : "Cliente inativado (inadimplencia/manual)."),
+    });
+  }
+  return one(sql`SELECT * FROM tenants WHERE id=${tenantId}`);
+}
+
+// Status consolidado para exibir na gestao de licencas:
+// { module, moduleName, active, status, quota }
+export async function tenantStatusInfo(tenant) {
+  const plan = await one(sql`SELECT * FROM plans WHERE id=${tenant.plan_id}`);
+  const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 1`);
+  const active = tenant.status === "active" && (!lic || lic.status === "active" || lic.status === "issued");
+  return {
+    module: tenant.plan_id,
+    moduleName: plan?.name || tenant.plan_id,
+    active,
+    status: tenant.status,
+    licenseStatus: lic?.status || null,
+    quota: await effectiveQuota(tenant),
+  };
+}
+
+// ---------------------------------------------------------------
+//  Suporte do dono: regenerar acesso + resetar MFA do cliente
+// ---------------------------------------------------------------
+export async function regenerateActivation({ tenantId, actor }) {
+  const lic = await one(sql`
+    SELECT * FROM licenses WHERE tenant_id=${tenantId}
+    ORDER BY created_at DESC LIMIT 1`);
+  if (!lic) throw new Error("Nenhuma licenca para este cliente.");
+  const updated = await one(sql`
+    UPDATE licenses SET activation_token=${genActivationToken()}, activated_at=NULL,
+      activated_by_user_id=NULL, status='issued', version=version+1, updated_at=now()
+    WHERE id=${lic.id} RETURNING *`);
+  await licenseEvent({ licenseId: lic.id, tenantId, event: "sent", actorEmail: actor?.email, note: "Acesso regenerado pelo suporte (novo token de ativacao)." });
+  const plan = await one(sql`SELECT * FROM plans WHERE id=${updated.plan_id}`);
+  const tenant = await one(sql`SELECT * FROM tenants WHERE id=${tenantId}`);
+  return { license: updated, plan, link: activationLink(updated), message: invitationMessage(updated, plan, tenant) };
+}
+
+export async function resetTenantMfa({ tenantId, actor }) {
+  const r = await sql`UPDATE users SET mfa_enabled=FALSE, mfa_secret=NULL WHERE tenant_id=${tenantId}`;
+  const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
+  if (lic) await licenseEvent({ licenseId: lic.id, tenantId, event: "sent", actorEmail: actor?.email, note: "MFA do cliente resetado pelo suporte." });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------
 //  COTA DE CLIENTES — limite por modulo
 // ---------------------------------------------------------------
 export async function effectiveQuota(tenant) {

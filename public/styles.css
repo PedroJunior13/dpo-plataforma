@@ -87,3 +87,69 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .section-pad{padding:22px 0 60px}
 .flex{display:flex;align-items:center;gap:10px} .between{justify-content:space-between} .wrap-actions{flex-wrap:wrap}
 .hide{display:none}
+
+/* ====== Painel do Dono — dashboard interativo / CRM / suporte ====== */
+/* KPI clicavel (drill-down) */
+.kpi.click{cursor:pointer;transition:.15s;position:relative}
+.kpi.click:hover{border-color:var(--gold);transform:translateY(-2px)}
+.kpi.click::after{content:"›";position:absolute;top:12px;right:14px;color:var(--mut2);font-size:18px}
+.kpi .sub{color:var(--mut2);font-size:11px;margin-top:6px}
+
+/* Selo de versao na nav */
+.ver{font-size:10.5px;color:var(--mut2);border:1px solid var(--line);border-radius:99px;padding:2px 8px;align-self:center;margin-left:4px;white-space:nowrap}
+
+/* Selo "i" (Entenda este bloco) + bloco informativo clicavel */
+.info-dot{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
+  border:1px solid var(--line);color:var(--mut);font-size:11px;font-weight:800;font-style:normal;line-height:1;
+  cursor:pointer;margin-left:8px;vertical-align:middle;user-select:none;transition:.15s;font-family:Georgia,'Times New Roman',serif}
+.info-dot:hover{border-color:var(--gold);color:var(--gold2);background:rgba(217,164,65,.14)}
+.card[data-info]{cursor:pointer}
+.card[data-info]:hover{border-color:rgba(217,164,65,.4)}
+.card[data-info]:hover .info-dot{border-color:var(--gold);color:var(--gold2)}
+
+/* Grade de cartoes do dashboard */
+.dash{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:start;margin-top:4px}
+@media(max-width:880px){.dash{grid-template-columns:1fr}}
+
+/* Mini grafico de barras (receita por mes) */
+.barchart{display:flex;align-items:flex-end;gap:10px;height:140px;padding-top:8px}
+.barcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:flex-end;height:100%}
+.barcol .bar{width:100%;max-width:34px;background:linear-gradient(180deg,var(--gold2),var(--gold));border-radius:6px 6px 0 0;min-height:3px;transition:.3s}
+.barcol .bl{font-size:10.5px;color:var(--mut2)} .barcol .bv{font-size:10.5px;color:var(--txt);font-weight:700}
+
+/* Barras horizontais (status de licenca / distribuicao por modulo) */
+.hbar{margin:9px 0}
+.hbar .lbl{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px}
+.hbar .track{height:9px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden}
+.hbar .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--steel),var(--blue))}
+.hbar .fill.g{background:linear-gradient(90deg,var(--green),#5fd07a)}
+.hbar .fill.r{background:linear-gradient(90deg,var(--red),#f0808f)}
+.hbar .fill.gold{background:linear-gradient(90deg,var(--gold),var(--gold2))}
+
+/* Funil do CRM */
+.funnel{display:flex;flex-direction:column;gap:7px}
+.funnel .stg{display:flex;align-items:center;gap:10px}
+.funnel .stg .nm{width:84px;font-size:12.5px;color:var(--mut);text-transform:capitalize}
+.funnel .stg .bar{height:26px;border-radius:7px;background:linear-gradient(90deg,#2a4d86,var(--steel));display:flex;align-items:center;padding:0 9px;color:#fff;font-weight:700;font-size:12px;min-width:34px}
+.funnel .stg .vl{font-size:11.5px;color:var(--mut2)}
+
+/* Quadro Kanban do CRM */
+.pipe{display:grid;grid-template-columns:repeat(6,minmax(150px,1fr));gap:10px;overflow-x:auto;padding-bottom:6px}
+@media(max-width:880px){.pipe{grid-auto-flow:column;grid-template-columns:none;grid-auto-columns:78%}}
+.pipe-col{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px;min-height:80px}
+.pipe-col h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--mut);display:flex;justify-content:space-between}
+.pipe-card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px;margin-bottom:8px;cursor:pointer;transition:.12s}
+.pipe-card:hover{border-color:var(--gold)}
+.pipe-card .nm{font-weight:700;font-size:13px} .pipe-card .mt{font-size:11px;color:var(--mut2);margin-top:3px}
+
+/* Drawer largo (gerenciar cliente / suporte) */
+.modal.wide{max-width:780px}
+.actrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.statline{display:flex;flex-wrap:wrap;gap:14px;padding:12px;background:rgba(255,255,255,.03);border-radius:10px;margin:10px 0}
+.statline .it .k{font-size:11px;color:var(--mut2)} .statline .it .v{font-weight:700}
+.chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--mut);margin:2px 2px 0 0}
+
+/* Banner de modo suporte (no /app/) */
+.support-banner{position:fixed;bottom:0;left:0;right:0;z-index:60;background:linear-gradient(90deg,#7a2e2e,#9a3b3b);color:#fff;
+  padding:9px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:13px;font-weight:600;box-shadow:0 -2px 12px rgba(0,0,0,.3)}
+.support-banner a,.support-banner button{color:#fff;text-decoration:underline;background:none;border:none;cursor:pointer;font-weight:700;font-size:13px}

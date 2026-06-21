@@ -5,23 +5,48 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ativar acesso — DPO PJ Protection</title>
 <link rel="stylesheet" href="/styles.css">
+<style>
+  /* Stepper de progresso (desktop + mobile) */
+  .steps{display:flex;align-items:center;gap:6px;justify-content:center;margin:4px 0 18px}
+  .steps .st{display:flex;align-items:center;gap:6px;color:var(--mut2);font-size:12px;font-weight:700}
+  .steps .dot{width:24px;height:24px;border-radius:99px;border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px}
+  .steps .st.on{color:var(--gold2)} .steps .st.on .dot{border-color:var(--gold);background:rgba(217,164,65,.12)}
+  .steps .st.ok .dot{border-color:var(--green);color:#8fe6a0;background:rgba(55,178,77,.12)}
+  .steps .sep{flex:1;max-width:26px;height:1.5px;background:var(--line)}
+  @media(max-width:420px){.steps .lbl{display:none}}
+  /* Caixa da chave 2FA */
+  .keybox{background:#0b1a31;border:1px dashed var(--gold);border-radius:var(--r2);padding:14px;text-align:center;margin:10px 0}
+  .keybox .k{font-family:ui-monospace,Menlo,monospace;font-size:18px;letter-spacing:3px;color:#ffe7b3;word-break:break-all;font-weight:700}
+  .code-input{letter-spacing:8px;text-align:center;font-size:22px;font-family:ui-monospace,Menlo,monospace}
+  .help-ol{margin:6px 0 0;padding-left:18px;color:var(--mut);font-size:12.5px;line-height:1.6}
+  .help-ol li{margin:2px 0}
+</style>
 </head>
 <body>
 <div class="login-wrap">
   <div class="login-card card">
-    <div class="center" style="margin-bottom:14px">
+    <div class="center" style="margin-bottom:8px">
       <div class="brand" style="font-size:22px">DPO PJ <span class="g">Protection</span></div>
-      <p class="muted small" style="margin-top:6px">Ative seu acesso em 3 passos.</p>
+      <p class="muted small" style="margin-top:6px">Ative seu acesso com segurança.</p>
+    </div>
+
+    <!-- Indicador de progresso -->
+    <div class="steps" id="stepper">
+      <div class="st" data-s="1"><span class="dot">1</span><span class="lbl">Conta</span></div>
+      <div class="sep"></div>
+      <div class="st" data-s="2"><span class="dot">2</span><span class="lbl">Segurança</span></div>
+      <div class="sep"></div>
+      <div class="st" data-s="3"><span class="dot">3</span><span class="lbl">Licença</span></div>
     </div>
 
     <!-- STEP 1: criar usuário -->
     <div id="step-account">
-      <h3>1. Crie seu usuário</h3>
+      <h3>1. Crie seu acesso</h3>
       <div class="field"><label>Seu nome</label><input id="name" placeholder="Nome completo"></div>
       <div class="field"><label>E-mail</label><input id="email" type="email" autocomplete="username" placeholder="voce@empresa.com.br"></div>
       <div class="field"><label>Senha (mín. 8 caracteres)</label><input id="password" type="password" autocomplete="new-password"></div>
-      <button class="btn gold block" id="btnCreate">Criar usuário e continuar</button>
-      <p class="small center muted" style="margin-top:10px">Já tem usuário? <a href="#" id="goLogin">Faça login para ativar</a></p>
+      <button class="btn gold block" id="btnCreate">Criar acesso e continuar</button>
+      <p class="small center muted" style="margin-top:10px">Já tem acesso? <a href="#" id="goLogin">Entrar para ativar</a></p>
     </div>
 
     <!-- STEP 1b: login (caso já tenha conta) -->
@@ -30,23 +55,60 @@
       <div class="field"><label>E-mail</label><input id="l_email" type="email" autocomplete="username"></div>
       <div class="field"><label>Senha</label><input id="l_password" type="password" autocomplete="current-password"></div>
       <button class="btn gold block" id="btnLoginAct">Entrar</button>
-      <p class="small center muted" style="margin-top:10px"><a href="#" id="goCreate">Criar um novo usuário</a></p>
+      <p class="small center muted" style="margin-top:10px"><a href="#" id="goCreate">Criar um novo acesso</a></p>
     </div>
 
-    <!-- STEP 2: ativar com a licença -->
+    <!-- STEP 1c: desafio MFA (login de quem já tem 2FA) -->
+    <div id="step-mfachallenge" class="hide">
+      <h3>Verificação em duas etapas</h3>
+      <p class="muted small">Informe o código de 6 dígitos do seu app autenticador.</p>
+      <div class="field"><input id="mfaChallengeCode" class="code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>
+      <button class="btn gold block" id="btnMfaChallenge">Confirmar e continuar</button>
+      <p class="small center muted" style="margin-top:10px"><a href="#" id="mfaBack">Voltar</a></p>
+    </div>
+
+    <!-- STEP 2: configurar 2FA (obrigatório no cadastro) -->
+    <div id="step-twofa" class="hide">
+      <h3>2. Proteja sua conta (2FA)</h3>
+      <p class="muted small">A verificação em duas etapas é obrigatória. Use um app autenticador
+        (Google Authenticator, Authy, Microsoft Authenticator, 1Password…).</p>
+
+      <ol class="help-ol">
+        <li>Abra seu app autenticador e escolha <b>“Inserir chave de configuração”</b>.</li>
+        <li>Use sua conta de e-mail como rótulo e cole a chave abaixo.</li>
+        <li>Digite o código de 6 dígitos que aparecer para confirmar.</li>
+      </ol>
+
+      <div class="keybox">
+        <div class="muted small" style="margin-bottom:6px">Sua chave secreta</div>
+        <div class="k" id="mfaSecret">…</div>
+        <div class="flex" style="gap:8px;justify-content:center;margin-top:10px">
+          <button class="btn ghost sm" id="btnCopyKey">Copiar chave</button>
+          <a class="btn ghost sm" id="btnOpenApp" href="#">Abrir no app</a>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:6px"><label>Código do autenticador</label>
+        <input id="enableCode" class="code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>
+      <button class="btn gold block" id="btnEnable2fa">Ativar 2FA e continuar</button>
+      <p class="small center muted" style="margin-top:10px">Guarde a chave. Se perder o app, o suporte pode redefinir seu 2FA.</p>
+    </div>
+
+    <!-- STEP 3: ativar com a licença -->
     <div id="step-activate" class="hide">
-      <h3>2. Confirme sua licença</h3>
-      <p class="muted small">A licença e o token já vêm preenchidos pelo link. Confira e ative.</p>
+      <h3>3. Ative sua licença</h3>
+      <p class="muted small">Informe a licença e o token (já vêm preenchidos pelo link de ativação).</p>
       <div class="field"><label>Licença</label><input id="lic" class="mono" placeholder="DPO-XXXX-XXXX-XXXX"></div>
       <div class="field"><label>Token de ativação</label><input id="tok" class="mono" placeholder="token"></div>
       <button class="btn gold block" id="btnActivate">Ativar meu acesso</button>
+      <p class="small center muted" style="margin-top:10px">Ainda não tem a licença? Ela é enviada por e-mail/WhatsApp após a confirmação da compra.</p>
     </div>
 
-    <!-- STEP 3: sucesso -->
+    <!-- STEP 4: sucesso -->
     <div id="step-done" class="hide center">
       <div style="font-size:42px">✅</div>
       <h2>Acesso liberado!</h2>
-      <p class="muted">Seu módulo está ativo. Você já pode entrar na plataforma.</p>
+      <p class="muted">Seu módulo está ativo e protegido com 2FA. Você já pode entrar na plataforma.</p>
       <a class="btn gold block" href="/app/">Entrar na plataforma</a>
     </div>
 
@@ -63,67 +125,159 @@
   const presetLic = (params.get("lic") || "").trim();
   const presetTok = (params.get("t") || "").trim();
 
-  function step(name) { ["account", "login", "activate", "done"].forEach((s) => $("#step-" + s).classList.toggle("hide", s !== name)); }
+  let mfaToken = null;       // desafio curto (login de quem já tem 2FA)
+  let pendingSecret = null;  // segredo provisório durante a configuração do 2FA
+
+  const STEPS = ["account", "login", "mfachallenge", "twofa", "activate", "done"];
+  function step(name) {
+    STEPS.forEach((s) => $("#step-" + s).classList.toggle("hide", s !== name));
+    // Atualiza o stepper visual (1 Conta · 2 Segurança · 3 Licença).
+    const phase = (name === "twofa") ? 2 : (name === "activate" || name === "done") ? 3 : 1;
+    document.querySelectorAll("#stepper .st").forEach((el) => {
+      const s = +el.dataset.s;
+      el.classList.toggle("on", s === phase && name !== "done");
+      el.classList.toggle("ok", s < phase || name === "done");
+    });
+  }
   function showErr(m) { const e = $("#err"); e.textContent = m; e.classList.remove("hide"); }
   function clearErr() { $("#err").classList.add("hide"); }
-  function setToken(d) { localStorage.setItem("dpo_token", d.token); localStorage.setItem("dpo_user", JSON.stringify(d.user)); }
+  function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 1600); }
+
+  function getUser() { try { return JSON.parse(localStorage.getItem("dpo_user") || "null"); } catch { return null; } }
+  function setSession(d) {
+    if (d.token) localStorage.setItem("dpo_token", d.token);
+    if (d.user) localStorage.setItem("dpo_user", JSON.stringify(d.user));
+  }
+  function patchUser(patch) {
+    const u = getUser() || {}; Object.assign(u, patch);
+    localStorage.setItem("dpo_user", JSON.stringify(u)); return u;
+  }
+  function token() { return localStorage.getItem("dpo_token"); }
+
+  async function post(path, body, withAuth) {
+    const headers = { "Content-Type": "application/json" };
+    if (withAuth && token()) headers["Authorization"] = "Bearer " + token();
+    const res = await fetch("/api" + path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.error || "Erro. Tente novamente.");
+    return data;
+  }
+
+  // Decide o passo conforme o estado da conta:
+  //  sem tenant + sem 2FA  -> configurar 2FA (obrigatório)
+  //  sem tenant + com 2FA  -> ativar licença
+  //  com tenant            -> concluído
+  function routeAfterAuth(user) {
+    clearErr();
+    if (user && user.tenant_id) { step("done"); return; }
+    if (user && !user.mfa_enabled) { startTwofa(); return; }
+    step("activate");
+  }
 
   // Preenche a licença vinda do link.
   $("#lic").value = presetLic; $("#tok").value = presetTok;
 
-  // Se já está logado, pula direto para ativação.
-  const t = localStorage.getItem("dpo_token");
-  const u = JSON.parse(localStorage.getItem("dpo_user") || "null");
-  if (t && u) {
-    if (u.tenant_id) { step("done"); } // já tem ambiente
-    else step("activate");
-  } else step("account");
+  // Estado inicial.
+  (function init() {
+    const u = getUser();
+    if (token() && u) routeAfterAuth(u);
+    else step("account");
+  })();
 
+  // ---- navegação entre conta / login ----
   $("#goLogin").addEventListener("click", (e) => { e.preventDefault(); clearErr(); step("login"); });
   $("#goCreate").addEventListener("click", (e) => { e.preventDefault(); clearErr(); step("account"); });
+  $("#mfaBack").addEventListener("click", (e) => { e.preventDefault(); mfaToken = null; clearErr(); step("login"); });
 
-  async function post(path, body, token) {
-    const res = await fetch("/api" + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(token ? { "Authorization": "Bearer " + token } : {}) },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.ok === false) throw new Error(data.error || "Erro.");
-    return data;
-  }
-
-  // Criar usuário
+  // ---- criar conta ----
   $("#btnCreate").addEventListener("click", async () => {
     clearErr();
+    const name = $("#name").value.trim(), email = $("#email").value.trim(), password = $("#password").value;
+    if (!name || !email) return showErr("Informe seu nome e e-mail.");
+    if (password.length < 8) return showErr("A senha deve ter ao menos 8 caracteres.");
     const b = $("#btnCreate"); b.disabled = true; b.textContent = "Criando…";
     try {
-      const d = await post("/auth/signup", { name: $("#name").value.trim(), email: $("#email").value.trim(), password: $("#password").value });
-      setToken(d); step("activate");
-    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Criar usuário e continuar"; }
+      const d = await post("/auth/signup", { name, email, password });
+      setSession(d);
+      routeAfterAuth(d.user); // novo usuário: sem tenant e sem 2FA -> configura 2FA
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Criar acesso e continuar"; }
   });
 
-  // Login para ativar
+  // ---- login para ativar ----
   $("#btnLoginAct").addEventListener("click", async () => {
     clearErr();
     const b = $("#btnLoginAct"); b.disabled = true; b.textContent = "Entrando…";
     try {
       const d = await post("/auth/login", { email: $("#l_email").value.trim(), password: $("#l_password").value });
-      setToken(d);
-      if (d.user.tenant_id) step("done"); else step("activate");
+      if (d.mfaRequired) { mfaToken = d.mfaToken; step("mfachallenge"); setTimeout(() => $("#mfaChallengeCode").focus(), 50); return; }
+      setSession(d); routeAfterAuth(d.user);
     } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Entrar"; }
   });
 
-  // Ativar com a licença
+  // ---- desafio MFA no login ----
+  $("#btnMfaChallenge").addEventListener("click", async () => {
+    clearErr();
+    const code = ($("#mfaChallengeCode").value || "").replace(/\D/g, "");
+    if (code.length !== 6) return showErr("Informe os 6 dígitos do app.");
+    const b = $("#btnMfaChallenge"); b.disabled = true; b.textContent = "Confirmando…";
+    try {
+      const d = await post("/auth/mfa-verify", { mfaToken, code });
+      setSession(d); mfaToken = null; routeAfterAuth(d.user);
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Confirmar e continuar"; }
+  });
+
+  // ---- configurar 2FA (obrigatório) ----
+  async function startTwofa() {
+    step("twofa");
+    $("#mfaSecret").textContent = "…";
+    try {
+      const d = await post("/auth/mfa/setup", {}, true);
+      pendingSecret = d.secret;
+      $("#mfaSecret").textContent = groupKey(d.secret);
+      $("#btnOpenApp").setAttribute("href", d.otpauth || "#");
+    } catch (e) { showErr(e.message); }
+  }
+  function groupKey(s) { return String(s || "").replace(/(.{4})/g, "$1 ").trim(); }
+
+  $("#btnCopyKey").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(pendingSecret || ""); toast("Chave copiada"); }
+    catch { toast("Copie manualmente"); }
+  });
+
+  $("#btnEnable2fa").addEventListener("click", async () => {
+    clearErr();
+    const code = ($("#enableCode").value || "").replace(/\D/g, "");
+    if (code.length !== 6) return showErr("Digite o código de 6 dígitos do app.");
+    const b = $("#btnEnable2fa"); b.disabled = true; b.textContent = "Ativando…";
+    try {
+      await post("/auth/mfa/enable", { code }, true);
+      const u = patchUser({ mfa_enabled: true });
+      toast("2FA ativado");
+      routeAfterAuth(u); // agora vai para a ativação da licença
+    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Ativar 2FA e continuar"; }
+  });
+
+  // ---- ativar licença (cai no perfil correto da licença) ----
   $("#btnActivate").addEventListener("click", async () => {
     clearErr();
+    const licenseKey = $("#lic").value.trim(), activationToken = $("#tok").value.trim();
+    if (!licenseKey || !activationToken) return showErr("Informe a licença e o token de ativação.");
     const b = $("#btnActivate"); b.disabled = true; b.textContent = "Ativando…";
     try {
-      const token = localStorage.getItem("dpo_token");
-      const d = await post("/auth/activate", { licenseKey: $("#lic").value.trim(), activationToken: $("#tok").value.trim() }, token);
-      setToken(d); step("done");
-    } catch (e) { showErr(e.message); } finally { b.disabled = false; b.textContent = "Ativar meu acesso"; }
+      const d = await post("/auth/activate", { licenseKey, activationToken }, true);
+      setSession(d); // token novo já com o tenant correto
+      step("done");
+    } catch (e) {
+      // Conta sem 2FA tentando ativar: leva para configurar a verificação em 2 etapas.
+      if (/2 ?fa|duas etapas/i.test(e.message) || !(getUser() || {}).mfa_enabled) { showErr("Configure o 2FA para ativar."); startTwofa(); }
+      else showErr(e.message);
+    } finally { b.disabled = false; b.textContent = "Ativar meu acesso"; }
   });
+
+  // Enter envia o passo atual.
+  $("#enableCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#btnEnable2fa").click(); });
+  $("#mfaChallengeCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#btnMfaChallenge").click(); });
+  $("#tok").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#btnActivate").click(); });
 })();
 </script>
 </body>

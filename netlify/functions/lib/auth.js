@@ -70,6 +70,42 @@ export async function verifyMfaChallenge(token) {
   } catch { return null; }
 }
 
+// ---------- Suporte / impersonacao (dono acessa ambiente de um cliente) ----------
+// Token curto que carrega o tenant alvo. O dono continua sendo o ator real
+// (owner_email), mas opera "como" o tenant do cliente para dar suporte.
+const SUPPORT_TTL_SECONDS = 60 * 30; // 30 min
+export async function makeSupportToken(owner, tenantId) {
+  return await new SignJWT({
+    email: owner.email,
+    name: owner.name,
+    role: "OWNER",
+    is_owner: true,
+    tenant_id: tenantId,        // passa a operar no tenant do cliente
+    support: true,              // marca de sessao de suporte
+    act_as_tenant: tenantId,
+    owner_email: owner.email,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(String(owner.id))
+    .setIssuedAt()
+    .setExpirationTime(`${SUPPORT_TTL_SECONDS}s`)
+    .sign(secretKey());
+}
+
+// ---------- Seguranca: bloqueio por tentativas (anti brute-force) ----------
+export const MAX_FAILED_LOGINS = 5;
+export const LOCKOUT_MINUTES = 15;
+// Verdadeiro se a conta esta temporariamente travada.
+export function isLocked(user) {
+  if (!user || !user.locked_until) return false;
+  return new Date(user.locked_until).getTime() > Date.now();
+}
+// Minutos restantes de bloqueio (arredonda para cima).
+export function lockMinutesLeft(user) {
+  if (!isLocked(user)) return 0;
+  return Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+}
+
 // Extrai e valida o usuario do header Authorization: Bearer xxx
 export async function userFromRequest(req) {
   const h = req.headers.get("authorization") || "";

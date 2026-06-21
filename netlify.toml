@@ -55,12 +55,32 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Versao da plataforma (controle de versao) — refletida no painel do dono.
+  PLATFORM_VERSION = "2.2.0"
 
-# Cabecalhos de seguranca basicos
+# ──────────────────────────────────────────────────────────────────────────
+# Cabecalhos de seguranca (anti-invasao / clickjacking / sniffing / XSS)
+# ──────────────────────────────────────────────────────────────────────────
+# CSP: a plataforma e 100% self-hosted + inline (scripts/estilos/handlers
+# embutidos), por isso script/style precisam de 'unsafe-inline'. Tudo o que e
+# carregado de fora e conteudo de midia do LMS (videos YouTube/Vimeo/HeyGen/
+# Drive em <iframe>, capas/logos https, selo data:, videos data:/blob:) — por
+# isso frame/img/media liberam https:/data:/blob:. Nenhuma origem externa
+# executa SCRIPT: script-src fica restrito a 'self'+inline. frame-ancestors,
+# base-uri, object-src e form-action travam embedding/hijack/exfiltracao.
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options        = "SAMEORIGIN"
+    X-Frame-Options           = "SAMEORIGIN"
+    X-Content-Type-Options    = "nosniff"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Permissions-Policy        = "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+    Content-Security-Policy   = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; frame-src 'self' https:; child-src 'self' https:"
+
+# A API (funcoes) responde JSON e nunca deve ser cacheada por intermediarios.
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store"
     X-Content-Type-Options = "nosniff"
-    Referrer-Policy        = "strict-origin-when-cross-origin"
-    Permissions-Policy     = "geolocation=(), microphone=(), camera=()"

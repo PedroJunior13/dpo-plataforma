@@ -3,20 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Tutorial operacional — DPO PJ Protection</title>
 <link rel="stylesheet" href="/styles.css">
 <style>
-  .doc{max-width:820px;margin:0 auto}
-  .doc h2{margin-top:34px;padding-top:18px;border-top:1px solid var(--line)}
-  .doc h3{margin-top:22px;color:var(--gold2)}
+  .doc{max-width:860px;margin:0 auto}
+  .doc h2{margin-top:36px;padding-top:18px;border-top:1px solid var(--line)}
+  .doc h3{margin-top:24px;color:var(--gold2)}
   .doc p,.doc li{color:var(--mut);line-height:1.65}
   .doc ol,.doc ul{padding-left:22px}
   .doc li{margin:7px 0}
   .step{display:flex;gap:14px;align-items:flex-start;margin:14px 0}
   .step .n{flex:none;width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .step .n.ok{background:linear-gradient(135deg,var(--green),#5fd07a);color:#06210d}
   .note{background:rgba(91,140,196,.10);border:1px solid rgba(91,140,196,.3);border-radius:10px;padding:12px 14px;margin:14px 0;color:#cfe0f7;font-size:13.5px}
+  .note.warn{background:rgba(224,168,0,.10);border-color:rgba(224,168,0,.35);color:#f3d171}
+  .note.danger{background:rgba(224,86,107,.10);border-color:rgba(224,86,107,.35);color:#ffb9c3}
+  .note.ok{background:rgba(55,178,77,.10);border-color:rgba(55,178,77,.35);color:#bdf0c8}
   .toc a{display:block;padding:4px 0;color:var(--gold2)}
   code{background:#0b1a31;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#cfe0f7}
+  .tab{display:inline-block;background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.35);color:var(--gold2);border-radius:7px;padding:1px 9px;font-weight:700;font-size:12.5px}
+  .btnref{display:inline-block;background:#0b1a31;border:1px solid var(--line);border-radius:7px;padding:1px 8px;font-weight:700;font-size:12.5px;color:var(--txt)}
+  .new{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;border-radius:99px;padding:1px 9px;font-size:10.5px;font-weight:800;letter-spacing:.4px;vertical-align:middle;margin-left:6px}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0;padding:14px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:12px}
+  .flow .b{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-weight:700;font-size:13px;color:var(--txt)}
+  .flow .ar{color:var(--gold2);font-weight:800}
 </style>
 </head>
 <body>
@@ -25,111 +36,186 @@
 
 <main class="wrap section-pad">
 <div class="doc">
-  <h1>Tutorial operacional — vendas e gestão</h1>
-  <p>Guia exclusivo do dono. Do contato com o cliente à ativação, monitoramento,
-     cobrança, upgrade e auditoria. Tudo pelo painel <code>/painel</code>.</p>
+  <h1>Tutorial operacional do dono — vendas e gestão</h1>
+  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.2.0</b>).
+     Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
+     <b>Compras → gerar a licença em 1 clique</b>, suporte dentro do ambiente do cliente, CRM,
+     cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
 
   <div class="card toc" style="margin:18px 0">
     <b>Índice</b>
-    <a href="#fluxo">1. Como funciona o ciclo comercial</a>
-    <a href="#emitir">2. Emitir licença e enviar para o cliente</a>
-    <a href="#ativacao">3. O que o cliente faz (ativação)</a>
-    <a href="#killswitch">4. Kill-switch: bloquear / reativar</a>
-    <a href="#upgrade">5. Upgrade de módulo e cota (sem perder dados)</a>
-    <a href="#cobranca">6. Cobrança automática e vencimentos</a>
-    <a href="#financeiro">7. Financeiro e NFS-e</a>
-    <a href="#consultoria">8. Seus clientes de consultoria</a>
-    <a href="#auditoria">9. Auditoria e versionamento</a>
-    <a href="#checklist">10. Checklist de venda (resumo)</a>
+    <a href="#painel">1. Visão geral do painel (as 6 abas)</a>
+    <a href="#caminhos">2. Os dois caminhos de entrada do cliente</a>
+    <a href="#compras">3. Compras → gerar a licença em 1 clique ⭐</a>
+    <a href="#emitir">4. Emitir licença manualmente (venda assistida)</a>
+    <a href="#ativacao">5. Ativação pelo cliente: Conta → 2FA → Licença ⭐</a>
+    <a href="#gerenciar">6. Drawer “Gerenciar”: suporte, módulo/cota e kill-switch</a>
+    <a href="#crm">7. CRM: funil, contatos, atividades e campanhas ⭐</a>
+    <a href="#dashboard">8. Painel (dashboard): leitura rápida do negócio</a>
+    <a href="#financeiro">9. Financeiro e NFS-e</a>
+    <a href="#cobranca">10. Cobrança automática e vencimentos</a>
+    <a href="#seguranca">11. Segurança: 2FA, bloqueio e blindagem ⭐</a>
+    <a href="#auditoria">12. Auditoria e versionamento</a>
+    <a href="#demo">13. Link de demonstração (7 dias)</a>
+    <a href="#checklist">14. Checklist rápido</a>
   </div>
 
-  <h2 id="fluxo">1. Como funciona o ciclo comercial</h2>
-  <p>São dois caminhos para o cliente entrar:</p>
+  <!-- 1 -->
+  <h2 id="painel">1. Visão geral do painel</h2>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.2.0</span> ao lado do menu.</p>
   <ul>
-    <li><b>Autoatendimento:</b> o cliente acessa <code>/checkout.html</code>, escolhe o módulo
-        e paga. Ao confirmar o pagamento, o sistema ativa e envia o link de ativação automaticamente.</li>
-    <li><b>Venda assistida (você no controle):</b> você emite a licença pelo painel e envia o
-        link você mesmo (WhatsApp/e-mail). Ideal para negociações e cobrança avulsa.</li>
+    <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
+    <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
+    <li><span class="tab">Licenças</span> — licenças &amp; assinantes unificados (status, upgrade/downgrade, suporte e acesso ao ambiente do cliente).</li>
+    <li><span class="tab">CRM</span> <span class="new">NOVO</span> — funil de vendas, histórico de relacionamento e campanhas de fidelização.</li>
+    <li><span class="tab">Financeiro</span> — pagamentos recebidos e emissão de NFS-e.</li>
+    <li><span class="tab">Auditoria</span> — trilha imutável de tudo (licenças, suporte, segurança e administração).</li>
   </ul>
-  <div class="note">Módulos: <b>Básico</b> (25 clientes), <b>Intermediário</b> (100),
-    <b>Avançado</b> (150). Recorrente tem <b>5% de desconto</b> e renova sozinho;
-    avulso bloqueia no vencimento.</div>
+  <p>Ainda na barra: <span class="btnref">Consultoria ↗</span> (entra no seu ambiente ilimitado de consultoria), <span class="btnref">Tutorial</span> (esta página) e <span class="btnref">Sair</span>.</p>
+  <div class="note">Os 5 cartões do topo do <span class="tab">Painel</span> são <b>clicáveis</b>: clicar leva direto à aba correspondente (ex.: “Compras a liberar” abre <span class="tab">Compras</span>).</div>
+  <div class="note ok"><b>Novo:</b> todo bloco de informação do painel tem um selo <b>ⓘ</b>. Clique no bloco (ou no selo) para abrir uma <b>janela com a explicação daquele bloco</b> e, quando fizer sentido, um botão que leva direto à área certa. Use sempre que tiver dúvida sobre o que um número ou gráfico significa.</div>
 
-  <h2 id="emitir">2. Emitir licença e enviar para o cliente</h2>
-  <div class="step"><div class="n">1</div><div>No painel, clique em <b>“+ Emitir licença”</b> (topo do Painel ou aba <b>Licenças</b>).</div></div>
-  <div class="step"><div class="n">2</div><div>Preencha nome, e-mail e WhatsApp do cliente, escolha o <b>módulo</b> e o tipo de <b>cobrança</b>.</div></div>
-  <div class="step"><div class="n">3</div><div>Clique em <b>“Gerar licença e link”</b>. O sistema cria o cliente e mostra três coisas prontas:</div></div>
+  <!-- 2 -->
+  <h2 id="caminhos">2. Os dois caminhos de entrada do cliente</h2>
   <ul>
-    <li><b>Link de ativação</b> — botão <b>Copiar</b>.</li>
-    <li><b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) — botão <b>Copiar</b>.</li>
-    <li><b>Mensagem pronta</b> (com o passo a passo já escrito) — botão <b>Copiar mensagem</b>
-        e, se houver WhatsApp, <b>Enviar no WhatsApp</b> (abre a conversa já com o texto).</li>
+    <li><b>Autoatendimento:</b> o cliente acessa <code>/checkout.html</code>, escolhe o módulo e paga. A transação aparece automaticamente na aba <span class="tab">Compras</span> para você liberar.</li>
+    <li><b>Venda assistida (você no controle):</b> você cria o cliente e emite a licença pelo painel (item 4) e envia o link você mesmo. Ideal para negociação e cobrança avulsa.</li>
   </ul>
-  <div class="note">Para reenviar depois: aba <b>Licenças</b> → botão <b>“Enviar/Copiar”</b> na linha
-    do cliente. Cada envio fica registrado na <b>Auditoria</b>.</div>
+  <div class="note">Módulos (a diferença é só o <b>número de clientes</b>): <b>Básico</b> 25 · <b>Intermediário</b> 100 · <b>Avançado</b> 150.
+    Recorrente tem <b>5% de desconto</b> e renova sozinho; avulso bloqueia no vencimento. Todos os módulos têm o <b>mesmo ambiente</b> — por isso upgrade/downgrade nunca perde dados.</div>
 
-  <h2 id="ativacao">3. O que o cliente faz (ativação)</h2>
+  <!-- 3 -->
+  <h2 id="compras">3. Compras → gerar a licença em 1 clique <span class="new">NOVO</span></h2>
+  <p>Esse é o fluxo principal quando o cliente paga sozinho pelo checkout. A licença sai <b>inerente ao módulo comprado</b> (cota e recursos já vêm certos) e cai no <b>perfil correto</b>.</p>
+  <div class="flow">
+    <span class="b">Cliente paga no checkout</span><span class="ar">→</span>
+    <span class="b">aba Compras</span><span class="ar">→</span>
+    <span class="b">Gerar licença</span><span class="ar">→</span>
+    <span class="b">Link + chave prontos</span>
+  </div>
+  <div class="step"><div class="n">1</div><div>No <span class="tab">Painel</span>, o KPI <b>“Compras a liberar”</b> fica dourado quando há pedidos pendentes. Clique nele (ou abra a aba <span class="tab">Compras</span>).</div></div>
+  <div class="step"><div class="n">2</div><div>Confira a linha: <b>Quando · Cliente · Módulo · Valor · Forma · Situação</b>. Situação <b>“Aguardando liberação”</b> = ainda sem licença.</div></div>
+  <div class="step"><div class="n">3</div><div>Clique em <span class="btnref">Gerar licença</span> e confirme. A chave é criada no perfil do cliente, no módulo comprado.</div></div>
+  <div class="step"><div class="n ok">4</div><div>Abre a janela com <b>Link de ativação</b>, <b>Licença</b> e <b>Mensagem pronta</b> — cada um com botão <b>Copiar</b>, e <b>Enviar no WhatsApp</b> quando houver telefone.</div></div>
+  <div class="note ok">Pronto: a situação vira <b>“Licença gerada”</b>. Para rever depois, use <span class="btnref">Ver licença</span> (leva à aba <span class="tab">Licenças</span>). Use <span class="btnref">Atualizar</span> para recarregar a lista.</div>
+
+  <!-- 4 -->
+  <h2 id="emitir">4. Emitir licença manualmente (venda assistida)</h2>
+  <div class="step"><div class="n">1</div><div>Clique em <span class="btnref">+ Emitir licença</span> (topo do <span class="tab">Painel</span> ou na aba <span class="tab">Licenças</span>).</div></div>
+  <div class="step"><div class="n">2</div><div>Preencha <b>Nome do cliente</b> (obrigatório), CNPJ/CPF, E-mail e WhatsApp. Dica: digite o CNPJ e clique em <span class="btnref">Buscar</span> para preencher nome/e-mail/telefone automaticamente.</div></div>
+  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e a <b>Cobrança</b> (Avulsa — bloqueia no vencimento · Recorrente — renova automático, −5%).</div></div>
+  <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
+  <div class="note">Para reenviar a qualquer momento: aba <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Enviar/Copiar link</span>. Todo envio fica registrado na <span class="tab">Auditoria</span>.</div>
+
+  <!-- 5 -->
+  <h2 id="ativacao">5. Ativação pelo cliente: Conta → 2FA → Licença <span class="new">NOVO</span></h2>
+  <p>Ao abrir o link, o cliente cai em <code>/ativar</code> e segue um assistente de <b>3 passos</b>. Conheça-o para conseguir orientar/dar suporte:</p>
+  <div class="flow">
+    <span class="b">1 · Conta</span><span class="ar">→</span>
+    <span class="b">2 · Segurança (2FA)</span><span class="ar">→</span>
+    <span class="b">3 · Licença</span>
+  </div>
   <ol>
-    <li>Abre o link recebido (cai em <code>/ativar</code> com a licença já preenchida).</li>
-    <li>Cria o usuário dele (e-mail + senha).</li>
-    <li>Confirma a licença → o módulo é <b>destravado na primeira vez</b> e o acesso fica ativo.</li>
+    <li><b>Passo 1 — Conta:</b> o cliente cria o usuário (e-mail + senha).</li>
+    <li><b>Passo 2 — Segurança (2FA obrigatório):</b> ele instala um app autenticador (Google Authenticator, Authy, etc.), <b>escaneia a chave</b> ou usa o botão de abrir o app, e digita o <b>código de 6 dígitos</b> para confirmar. <b>Sem o 2FA configurado, a licença não ativa</b> — essa trava é validada no servidor.</li>
+    <li><b>Passo 3 — Licença:</b> a licença já vem preenchida pelo link; ele confirma e o módulo é <b>destravado</b>. A partir daí entra pela tela de login em <code>/</code> e cai no <b>perfil certo</b> do módulo contratado.</li>
   </ol>
-  <p>A partir daí ele entra pela tela de login em <code>/</code>.</p>
+  <div class="note">Roteamento automático: se a conta já está vinculada → vai direto para “concluído”; se falta o 2FA → abre a tela de 2FA; senão → tela de licença. O cliente nunca cai no perfil errado.</div>
 
-  <h2 id="killswitch">4. Kill-switch: bloquear / reativar</h2>
-  <p>O controle de acesso é feito no servidor a cada requisição. Você pode agir manualmente:</p>
+  <!-- 6 -->
+  <h2 id="gerenciar">6. Drawer “Gerenciar”: suporte, módulo/cota e kill-switch</h2>
+  <p>Na aba <span class="tab">Licenças</span>, use a busca para achar o cliente e clique em <span class="btnref">Gerenciar</span>. Abre um painel lateral com o resumo (módulo, situação Ativo/Inativo, versão da licença <code>vN</code>, clientes/cota e validade) e três blocos de ações:</p>
+
+  <h3>6.1 Suporte — resolver no perfil do cliente <span class="new">NOVO</span></h3>
   <ul>
-    <li><b>Suspender</b> (aba Licenças → <b>Suspender</b>): corta o acesso imediatamente. Reversível.</li>
-    <li><b>Reativar</b>: devolve o acesso (após regularização, por exemplo).</li>
-    <li><b>Revogar</b>: encerra a licença em definitivo (cancela a assinatura do cliente).</li>
+    <li><span class="btnref">Acessar ambiente (suporte)</span> — abre o ambiente do cliente (<code>/app/</code>) em uma <b>nova aba, em modo suporte</b> (com faixa de aviso). Você vê e resolve exatamente o que o cliente vê. <b>Tudo fica registrado na auditoria.</b></li>
+    <li><span class="btnref">Enviar/Copiar link</span> — recupera o link/licença/mensagem para reenviar.</li>
+    <li><span class="btnref">Regenerar acesso</span> — cria um <b>novo token</b> de ativação (o link antigo deixa de valer). Use quando o cliente perdeu o link.</li>
+    <li><span class="btnref">Resetar 2FA</span> — zera o 2FA do cliente (ex.: ele trocou de celular). Ele <b>reconfigura no próximo login</b>.</li>
   </ul>
-  <div class="note">Bloqueios por <b>inadimplência</b> acontecem sozinhos (veja item 6).
-    Use a ação manual para casos pontuais.</div>
+  <div class="note warn">Resetar 2FA e Regenerar acesso são ações sensíveis — confirme a identidade do cliente antes. Ambas entram na <span class="tab">Auditoria</span>.</div>
 
-  <h2 id="upgrade">5. Upgrade de módulo e cota (sem perder dados)</h2>
-  <p>Na aba <b>Assinantes</b>, na linha do cliente:</p>
+  <h3>6.2 Módulo &amp; cota — upgrade/downgrade sem perder dados</h3>
   <ul>
-    <li><b>Módulo</b>: troca para outro plano (upgrade/downgrade). A cota de clientes se ajusta
-        automaticamente e <b>nenhum dado do cliente é perdido</b> — o ambiente é o mesmo para todos os módulos.</li>
-    <li><b>Cota</b>: define um limite sob medida (ex.: um cliente com 200 clientes). Vazio = usa a cota do módulo.</li>
+    <li><b>Mudar módulo:</b> escolha outro plano no seletor e clique em <span class="btnref">Aplicar módulo</span>. A cota de clientes se ajusta sozinha e <b>nenhum dado é perdido</b> (o ambiente é o mesmo em todos os módulos).</li>
+    <li><b>Cota personalizada:</b> defina um limite sob medida (ex.: 200) e clique em <span class="btnref">Salvar cota</span>. Deixe vazio para usar a cota padrão do módulo.</li>
+  </ul>
+  <div class="note">Quando o assinante atinge a cota, o cadastro de novos clientes no ambiente dele é <b>travado automaticamente</b>, com aviso para fazer upgrade — você não precisa fazer nada.</div>
+
+  <h3>6.3 Situação do acesso (kill-switch)</h3>
+  <ul>
+    <li><span class="btnref">Inativar (inadimplência/manual)</span> / <span class="btnref">Ativar acesso</span> — liga/desliga o acesso do cliente (pede o motivo ao inativar).</li>
+    <li><span class="btnref">Suspender licença</span> — corta o acesso imediatamente (reversível).</li>
+    <li><span class="btnref">Reativar licença</span> — devolve o acesso após regularização.</li>
+    <li><span class="btnref">Revogar licença</span> — encerra <b>em definitivo</b> e cancela a assinatura.</li>
+  </ul>
+  <div class="note danger">Bloqueios por <b>inadimplência</b> acontecem sozinhos (item 10). Use as ações manuais só para casos pontuais. <b>Revogar é irreversível.</b></div>
+
+  <!-- 7 -->
+  <h2 id="crm">7. CRM: funil, contatos, atividades e campanhas <span class="new">NOVO</span></h2>
+  <p>Na aba <span class="tab">CRM</span> você acompanha quatro indicadores no topo — <b>Contatos</b>, <b>Clientes (ganhos)</b>, <b>Conversão</b> e <b>Follow-ups (3 dias)</b> — e gerencia o funil em quadro Kanban com 6 estágios: <b>Lead · Contato · Proposta · Ganho · Perdido · Cliente</b>.</p>
+  <div class="step"><div class="n">1</div><div><span class="btnref">+ Novo contato</span>: cadastre Nome, Empresa, E-mail, WhatsApp, Estágio, Módulo de interesse e Observações → <span class="btnref">Adicionar ao funil</span>.</div></div>
+  <div class="step"><div class="n">2</div><div>Clique em um cartão para abrir o contato. Ali você usa os botões de <b>WhatsApp/E-mail</b>, <b>move no funil</b> (basta clicar no estágio) e <b>registra atividade</b> (Nota, Ligação, E-mail, WhatsApp, Reunião) com data de <b>próximo follow-up</b> e descrição. O <b>Histórico</b> mostra tudo o que já foi feito.</div></div>
+  <div class="step"><div class="n">3</div><div><span class="btnref">Campanhas</span> (de fidelização/retenção): crie uma campanha com <b>Canal</b> (WhatsApp/E-mail), <b>Público</b> (todos ou um estágio) e <b>Mensagem</b> usando <code>{nome}</code> e <code>{empresa}</code>. Em seguida clique em <span class="btnref">Disparar</span> para gerar um link de envio pronto para cada contato.</div></div>
+  <div class="note">O funil do CRM também aparece resumido no <span class="tab">Painel</span> (cartão “Funil de vendas”), com atalho <span class="btnref">Abrir CRM</span>.</div>
+
+  <!-- 8 -->
+  <h2 id="dashboard">8. Painel (dashboard): leitura rápida do negócio</h2>
+  <ul>
+    <li><b>KPIs clicáveis:</b> Assinantes · Compras a liberar · Licenças ativas · Clientes na operação · Receita recorrente (MRR).</li>
+    <li><b>Receita aprovada</b> (gráfico dos últimos 6 meses) e <b>Status das licenças</b> (barras).</li>
+    <li><b>Funil de vendas</b> e <b>Distribuição por módulo</b> (com receita por plano) + <b>Integrações</b> (gateways de pagamento e NFS-e).</li>
+    <li><b>Vencimentos &amp; atrasos</b> (próximos 7 dias): cada linha traz o botão <span class="btnref">Cobrar</span>, que abre o WhatsApp com a mensagem pronta.</li>
+    <li><b>Atividade recente:</b> últimos eventos, com atalho <span class="btnref">Ver auditoria</span>.</li>
   </ul>
 
-  <h2 id="cobranca">6. Cobrança automática e vencimentos</h2>
-  <p>Todo dia o sistema:</p>
+  <!-- 9 -->
+  <h2 id="financeiro">9. Financeiro e NFS-e</h2>
+  <p>Aba <span class="tab">Financeiro</span>: lista os pagamentos (Data, Cliente, Método, Valor, Status). Em pagamentos <b>aprovados/pagos</b>, o botão <span class="btnref">Emitir NFS-e</span> dispara a nota (quando a integração Focus NFe estiver configurada).</p>
+
+  <!-- 10 -->
+  <h2 id="cobranca">10. Cobrança automática e vencimentos</h2>
+  <p>Todos os dias o sistema, sozinho:</p>
   <ol>
     <li>Avisa o cliente <b>3 dias antes</b> do vencimento.</li>
     <li>No vencimento, entra em <b>carência</b> (padrão 5 dias).</li>
-    <li>Passada a carência, <b>bloqueia o acesso</b> (kill-switch) e suspende a licença.</li>
+    <li>Passada a carência, <b>bloqueia o acesso</b> e suspende a licença.</li>
     <li>Quando o pagamento é confirmado (webhook do gateway), <b>reativa automaticamente</b>.</li>
   </ol>
-  <p>No <b>Painel</b>, o bloco <b>“Vencimentos & atrasos”</b> mostra quem está vencendo/atrasado,
-     com botão <b>Cobrar</b> (abre o WhatsApp com a mensagem pronta).</p>
 
-  <h2 id="financeiro">7. Financeiro e NFS-e</h2>
-  <p>Aba <b>Financeiro</b>: lista os pagamentos. Para pagamentos confirmados, o botão
-     <b>“Emitir NFS-e”</b> dispara a nota (se a integração Focus NFe estiver configurada).</p>
+  <!-- 11 -->
+  <h2 id="seguranca">11. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
+  <ul>
+    <li><b>2FA obrigatório no cadastro</b> (item 5): todo assinante ativa a verificação em duas etapas antes de usar a plataforma.</li>
+    <li><b>Bloqueio por tentativas de login:</b> após várias senhas erradas a conta é travada por um período. Aparece na <span class="tab">Auditoria</span> como <b>“Conta bloqueada (tentativas)”</b>.</li>
+    <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
+    <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.2.0</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+  </ul>
 
-  <h2 id="consultoria">8. Seus clientes de consultoria</h2>
-  <p>Aba <b>Meus clientes</b>: seu ambiente próprio, <b>ilimitado</b>, para cadastrar os clientes
-     das suas consultorias — separado dos assinantes da plataforma.</p>
+  <!-- 12 -->
+  <h2 id="auditoria">12. Auditoria e versionamento</h2>
+  <p>Aba <span class="tab">Auditoria</span>: registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, demonstração recriada e ações de CRM (contato, estágio, campanha).
+     Cada licença tem um número de <b>versão</b> (<code>vN</code>) que incrementa a cada mudança de estado — rastreabilidade total para fins legais e de conformidade.</p>
 
-  <h2 id="auditoria">9. Auditoria e versionamento</h2>
-  <p>Aba <b>Auditoria</b>: registro <b>imutável</b> de todos os eventos de licença
-     (emitida, enviada, ativada, suspensa, reativada, revogada, upgrade/downgrade, mudança de cota).
-     Cada licença tem um número de <b>versão</b> que incrementa a cada mudança de estado —
-     rastreabilidade total para fins legais e de conformidade.</p>
+  <!-- 13 -->
+  <h2 id="demo">13. Link de demonstração (7 dias)</h2>
+  <p>No <span class="tab">Painel</span>, <span class="btnref">Link de demonstração</span> gera um ambiente completo com <b>clientes de exemplo</b> para o visitante percorrer o processo por <b>7 dias</b>. Ao gerar um novo link, o ambiente anterior é <b>apagado e recriado</b>.</p>
 
-  <h2 id="checklist">10. Checklist de venda (resumo)</h2>
+  <!-- 14 -->
+  <h2 id="checklist">14. Checklist rápido</h2>
   <ol>
-    <li>Painel → <b>+ Emitir licença</b> → preencher dados + módulo + cobrança.</li>
-    <li><b>Copiar mensagem</b> (ou <b>Enviar no WhatsApp</b>) e mandar para o cliente.</li>
-    <li>Cliente ativa pelo link (cria usuário + confirma licença).</li>
-    <li>Acompanhar pagamento no <b>Financeiro</b>; emitir <b>NFS-e</b>.</li>
-    <li>Monitorar <b>Vencimentos</b>; cobrar com 1 clique se necessário.</li>
-    <li>Upgrade/cota conforme o cliente cresce — sem perder dados.</li>
+    <li><b>Pagou sozinho?</b> Aba <span class="tab">Compras</span> → <span class="btnref">Gerar licença</span> → enviar link/mensagem.</li>
+    <li><b>Venda assistida?</b> <span class="btnref">+ Emitir licença</span> → preencher → <span class="btnref">Gerar licença e link</span> → enviar.</li>
+    <li>Cliente ativa: <b>cria conta → configura 2FA → confirma licença</b> (cai no perfil certo).</li>
+    <li>Precisa ajudar? <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Acessar ambiente (suporte)</span> / <span class="btnref">Regenerar acesso</span> / <span class="btnref">Resetar 2FA</span>.</li>
+    <li>Cliente cresceu? <span class="btnref">Aplicar módulo</span> ou <span class="btnref">Salvar cota</span> — sem perder dados.</li>
+    <li>Relacionamento: <span class="tab">CRM</span> para funil, follow-ups e <span class="btnref">Campanhas</span> de retenção.</li>
+    <li>Dinheiro: <span class="tab">Financeiro</span> (NFS-e) e bloco <b>Vencimentos</b> com <span class="btnref">Cobrar</span> em 1 clique.</li>
+    <li>Conformidade: <span class="tab">Auditoria</span> registra tudo.</li>
   </ol>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.2.0.</p>
 </div>
 </main>
 </body>
