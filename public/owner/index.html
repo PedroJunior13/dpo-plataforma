@@ -19,6 +19,7 @@
       <button data-view="licenses">Licenças</button>
       <button data-view="crm">CRM</button>
       <button data-view="payments">Financeiro</button>
+      <button data-view="support">Suporte<span id="supNavBadge" class="nav-badge" hidden>0</span></button>
       <button data-view="audit">Auditoria</button>
       <a href="/app/" class="nav-link" style="color:var(--gold2)">Consultoria ↗</a>
       <a href="/tutorial.html" class="nav-link">Tutorial</a>
@@ -138,6 +139,48 @@
       <table>
         <thead><tr><th>Data</th><th>Cliente</th><th>Método</th><th>Valor</th><th>Status</th><th style="text-align:right">NFS-e</th></tr></thead>
         <tbody id="payRows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ SUPORTE (SERVICE DESK) ============ -->
+  <section id="view-support" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:6px">
+      <div>
+        <h1>Suporte — Service Desk <span class="info-dot" data-info="sec_support" title="Entenda esta área">i</span></h1>
+        <p class="muted small">Chamados dos consultores e clientes, em fila por ordem de abertura, com SLA, status e resposta direta.</p>
+      </div>
+      <div class="flex wrap-actions" style="gap:8px">
+        <select id="supFilter" class="input" style="min-width:180px">
+          <option value="abertos">Em aberto (fila)</option>
+          <option value="todos">Todos os chamados</option>
+          <option value="aberto">Status: Aberto</option>
+          <option value="em_andamento">Status: Em andamento</option>
+          <option value="aguardando_cliente">Status: Aguardando cliente</option>
+          <option value="resolvido">Status: Resolvido</option>
+          <option value="fechado">Status: Fechado</option>
+        </select>
+        <button class="btn ghost" id="btnSupRefresh">Atualizar</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="supKpis"><div class="muted">Carregando…</div></div>
+
+    <div class="dash" style="margin-top:16px">
+      <div class="card" data-info="sup_status">
+        <h2>Chamados por status</h2>
+        <div id="supByStatus" class="small muted">Carregando…</div>
+      </div>
+      <div class="card" data-info="sup_priority">
+        <h2>Chamados por prioridade</h2>
+        <div id="supByPriority" class="small muted">Carregando…</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;overflow:auto;margin-top:16px">
+      <table>
+        <thead><tr><th>#</th><th>Aberto</th><th>SLA</th><th>Ambiente</th><th>Assunto</th><th>Categoria</th><th>Prioridade</th><th>Status</th><th style="text-align:right">Ação</th></tr></thead>
+        <tbody id="supRows"><tr><td colspan="9" class="muted">Carregando…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -264,6 +307,15 @@
     <button class="close" data-close>&times;</button>
     <h2>Campanhas de fidelização</h2>
     <div id="camp_body" class="muted small">Carregando…</div>
+  </div>
+</div>
+
+<!-- ============ MODAL: CHAMADO DE SUPORTE ============ -->
+<div class="modal-bg" id="modalTicket">
+  <div class="modal wide">
+    <button class="close" data-close>&times;</button>
+    <h2 id="tk_title">Chamado</h2>
+    <div id="tk_body" class="muted small">Carregando…</div>
   </div>
 </div>
 

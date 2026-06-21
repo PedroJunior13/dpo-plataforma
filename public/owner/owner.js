@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.3.0";
+  const PLATFORM_VERSION = "2.5.0";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -73,6 +73,9 @@
     sec_licenses: { t: "Licenças & assinantes", b: "Status de cada cliente (módulo + ativo/inativo), upgrade/downgrade sem perder dados, suporte e acesso ao ambiente do cliente. Use “Gerenciar” na linha do cliente.", goto: "licenses", gl: "Abrir Licenças" },
     sec_crm: { t: "CRM — vendas & fidelização", b: "Funil de oportunidades, histórico de relacionamento e campanhas de retenção. Clique num cartão para mover de estágio, registrar atividade e agendar o próximo follow-up.", goto: "crm", gl: "Abrir CRM" },
     sec_payments: { t: "Financeiro", b: "Pagamentos recebidos. Em pagamentos aprovados, use “Emitir NFS-e” para disparar a nota fiscal (integração Focus NFe).", goto: "payments", gl: "Abrir Financeiro" },
+    sec_support: { t: "Suporte — Service Desk", b: "Central de chamados dos consultores e clientes, em fila por ordem de abertura. Acompanhe SLA de 1ª resposta por prioridade, mude o status e responda direto ao solicitante (a resposta vai por e-mail e fica no histórico do chamado).", goto: "support", gl: "Abrir Suporte" },
+    sup_status: { t: "Chamados por status", b: "Distribuição da fila por situação: aberto, em andamento, aguardando cliente, resolvido e fechado. Use o filtro do topo para focar numa situação." },
+    sup_priority: { t: "Chamados por prioridade", b: "Quantidade de chamados em cada nível de prioridade. O SLA de 1ª resposta é: urgente 4h, alta 8h, normal 24h, baixa 48h." },
     sec_audit: { t: "Auditoria", b: "Trilha completa e imutável: licenças, suporte, segurança e ações administrativas. Cada licença tem um número de versão que incrementa a cada mudança de estado.", goto: "audit", gl: "Abrir Auditoria" },
     dash_revenue: { t: "Receita aprovada", b: "Soma dos pagamentos aprovados nos últimos 6 meses, mês a mês. Use para acompanhar a evolução do faturamento.", goto: "payments", gl: "Ver Financeiro" },
     dash_licstatus: { t: "Status das licenças", b: "Distribuição das licenças por situação (ativa, emitida, suspensa, etc.). Verde indica saudável; vermelho indica que exige atenção.", goto: "licenses", gl: "Ver Licenças" },
@@ -123,7 +126,7 @@
     $$(".view").forEach((v) => v.classList.add("hide"));
     const sec = $("#view-" + view); if (sec) sec.classList.remove("hide");
     ({ dashboard: loadDashboard, purchases: loadPurchases, licenses: loadLicenses,
-      crm: loadCrm, payments: loadPayments, audit: loadAudit }[view] || (() => {}))();
+      crm: loadCrm, payments: loadPayments, support: loadSupport, audit: loadAudit }[view] || (() => {}))();
   }
 
   // ===================================================================
@@ -679,6 +682,231 @@
   });
 
   // ===================================================================
+  //  SUPORTE — Service Desk (fila + SLA + status + resposta + dashboards)
+  // ===================================================================
+  const SUP_CAT = { acesso: "Acesso / login / senha", licenca: "Licença / cobrança / upgrade",
+    clientes: "Cadastro de clientes / cota", documentos: "Documentos / modelos / relatórios",
+    questionario: "Assistente de adequação / questionários", incidentes: "Incidentes / titulares",
+    treinamento: "Treinamentos / cursos", bug: "Erro / comportamento inesperado",
+    duvida: "Dúvida de uso", sugestao: "Sugestão / melhoria", outro: "Outro" };
+  const SUP_ST = { aberto: "Aberto", em_andamento: "Em andamento", aguardando_cliente: "Aguardando cliente",
+    resolvido: "Resolvido", fechado: "Fechado" };
+  const SUP_ST_TAG = { aberto: "suspended", em_andamento: "pending", aguardando_cliente: "grace",
+    resolvido: "active", fechado: "active" };
+  const SUP_PR = { baixa: "Baixa", normal: "Normal", alta: "Alta", urgente: "Urgente" };
+  const SUP_PR_TAG = { baixa: "grace", normal: "pending", alta: "pending", urgente: "suspended" };
+  const SUP_SLA = { urgente: 4, alta: 8, normal: 24, baixa: 48 };
+  const supCat = (id) => SUP_CAT[id] || id || "Outro";
+  function supSla(t) {
+    // Retorna {txt, cls} do SLA de 1ª resposta. Respondido → ok; senão prazo restante/estouro.
+    if (t.first_response_at) return { txt: "1ª resp. OK", cls: "ok" };
+    if (["resolvido", "fechado"].includes(t.status)) return { txt: "—", cls: "" };
+    const hours = SUP_SLA[t.priority] != null ? SUP_SLA[t.priority] : 24;
+    const due = new Date(t.created_at).getTime() + hours * 3600 * 1000;
+    const diffMs = due - Date.now();
+    const h = Math.floor(Math.abs(diffMs) / 3600000), m = Math.floor((Math.abs(diffMs) % 3600000) / 60000);
+    const hm = (h ? h + "h" : "") + m + "min";
+    return diffMs < 0 ? { txt: "estourado há " + hm, cls: "bad" } : { txt: "faltam " + hm, cls: "warn" };
+  }
+  const slaPill = (s) => {
+    const color = s.cls === "bad" ? "#ff6b81" : s.cls === "warn" ? "#f0b429" : s.cls === "ok" ? "#37b24d" : "#8a93a3";
+    const bg = s.cls === "bad" ? "rgba(255,107,129,.14)" : s.cls === "warn" ? "rgba(240,180,41,.14)" : s.cls === "ok" ? "rgba(55,178,77,.14)" : "rgba(138,147,163,.12)";
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;color:${color};background:${bg}">${esc(s.txt)}</span>`;
+  };
+  // Um chamado "aguarda o suporte" quando a última ação foi do cliente e ele não
+  // está resolvido/fechado (novo chamado ou nova resposta do cliente).
+  function supNeedsReply(t) {
+    return t.last_actor === "cliente" && !["resolvido", "fechado"].includes(t.status);
+  }
+  // ---- Alerta de novos chamados (badge no menu + som + toast) ----
+  let SUP_BADGE_N = -1;        // último valor conhecido (para detectar aumento)
+  let SUP_ALERT_READY = false; // evita tocar som/toast no 1º carregamento da sessão
+  function supSetBadge(n) {
+    const b = $("#supNavBadge"); if (!b) return;
+    n = +n || 0;
+    if (n > 0) { b.textContent = n > 99 ? "99+" : String(n); b.hidden = false; b.classList.add("pulse"); }
+    else { b.hidden = true; b.classList.remove("pulse"); }
+    SUP_BADGE_N = n;
+  }
+  function supBeep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+      const ctx = new Ctx(); const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
+      o.start(); o.stop(ctx.currentTime + 0.33);
+      o.onended = () => { try { ctx.close(); } catch (_) {} };
+    } catch (_) {}
+  }
+  // Notifica o sistema operacional (se o dono autorizar) — best-practice de service desk.
+  function supNotifyOS(n) {
+    try {
+      if (!("Notification" in window)) return;
+      if (Notification.permission === "granted") {
+        new Notification("Novo chamado de suporte", { body: n + " chamado(s) aguardando sua resposta.", tag: "dpo-support" });
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().catch(() => {});
+      }
+    } catch (_) {}
+  }
+  async function supPoll() {
+    try {
+      const s = await api("/owner/support/stats");
+      const t = s.totals || {};
+      const needs = t.needs_reply != null ? t.needs_reply : t.unanswered || 0;
+      const prev = SUP_BADGE_N;
+      supSetBadge(needs);
+      if (SUP_ALERT_READY && needs > prev && prev >= 0) {
+        toast("🛟 Novo chamado de suporte na fila (" + needs + " a responder).");
+        supBeep(); supNotifyOS(needs);
+      }
+      SUP_ALERT_READY = true;
+    } catch (_) { /* silencioso: alerta nunca derruba o painel */ }
+  }
+  let SUP_LAST_FILTER = "abertos";
+  async function loadSupport() {
+    const tb = $("#supRows");
+    const sel = $("#supFilter"); if (sel) sel.value = SUP_LAST_FILTER;
+    // --- Dashboards (stats) ---
+    try {
+      const s = await api("/owner/support/stats");
+      const t = s.totals || {};
+      const needs = t.needs_reply != null ? t.needs_reply : t.unanswered || 0;
+      $("#supKpis").innerHTML = [
+        kpi(needs, "Aguardando sua resposta", needs ? "gold" : "green", "chamados a responder"),
+        kpi(t.open, "Em aberto (fila)", t.open ? "" : "green", "em atendimento"),
+        kpi(s.breaching, "SLA estourado", s.breaching ? "r" : "green", "fora do prazo de 1ª resp."),
+        kpi((s.avgFirstResponseHours || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "h", "Tempo médio 1ª resp.", "", "chamados respondidos"),
+        kpi(t.total, "Total de chamados", "", `${t.last7 || 0} nos últimos 7 dias`),
+      ].join("");
+      supSetBadge(needs);
+      const bs = s.byStatus || {};
+      const totS = Math.max(1, Object.values(bs).reduce((a, b) => a + b, 0));
+      $("#supByStatus").innerHTML = Object.keys(SUP_ST).map((k) =>
+        `<div class="hbar"><div class="lbl"><span>${esc(SUP_ST[k])}</span><b>${bs[k] || 0}</b></div>
+         <div class="track"><div class="fill ${["resolvido", "fechado"].includes(k) ? "g" : k === "aberto" ? "r" : ""}" style="width:${Math.round(((bs[k] || 0) / totS) * 100)}%"></div></div></div>`).join("");
+      const bp = s.byPriority || {};
+      const totP = Math.max(1, Object.values(bp).reduce((a, b) => a + b, 0));
+      $("#supByPriority").innerHTML = ["urgente", "alta", "normal", "baixa"].map((k) =>
+        `<div class="hbar"><div class="lbl"><span>${esc(SUP_PR[k])} <span class="muted">(SLA ${SUP_SLA[k]}h)</span></span><b>${bp[k] || 0}</b></div>
+         <div class="track"><div class="fill ${k === "urgente" ? "r" : ""}" style="width:${Math.round(((bp[k] || 0) / totP) * 100)}%"></div></div></div>`).join("");
+    } catch (e) {
+      $("#supKpis").innerHTML = `<div style="color:#ff9aa8">${esc(e.message)}</div>`;
+    }
+    // --- Fila de chamados ---
+    try {
+      const f = SUP_LAST_FILTER;
+      const q = f === "abertos" ? "?open=1" : f === "todos" ? "" : "?status=" + encodeURIComponent(f);
+      const d = await api("/owner/support/tickets" + q);
+      const rows = d.tickets || [];
+      if (!rows.length) { tb.innerHTML = `<tr><td colspan="9" class="muted">Nenhum chamado nesta visão.</td></tr>`; return; }
+      tb.innerHTML = rows.map((t) => {
+        const sla = supSla(t);
+        const need = supNeedsReply(t);
+        const flag = need
+          ? ` <span class="sup-pill-new">● Novo / responder</span>`
+          : (t.status === "aguardando_cliente" ? ` <span class="sup-pill-wait">aguardando cliente</span>` : "");
+        return `<tr class="${need ? "sup-need" : ""}">
+          <td><b>#${esc(t.ticket_no)}</b></td>
+          <td class="small">${dtt(t.created_at)}</td>
+          <td>${slaPill(sla)}</td>
+          <td class="small">${esc(t.opener_name || t.opener_email || "—")}</td>
+          <td>${esc(t.subject)}${t.has_attachment ? ' <span title="tem anexo">📎</span>' : ""}${flag}</td>
+          <td class="small muted">${esc(supCat(t.category))}</td>
+          <td><span class="tag ${SUP_PR_TAG[t.priority] || "grace"}">${esc(SUP_PR[t.priority] || t.priority)}</span></td>
+          <td><span class="tag ${SUP_ST_TAG[t.status] || "grace"}">${esc(SUP_ST[t.status] || t.status)}</span></td>
+          <td style="text-align:right"><button class="btn sm gold" data-tk="${esc(t.id)}">Abrir</button></td>
+        </tr>`;
+      }).join("");
+    } catch (e) { tb.innerHTML = `<tr><td colspan="9" style="color:#ff9aa8">${esc(e.message)}</td></tr>`; }
+  }
+  const _supFilterEl = $("#supFilter");
+  if (_supFilterEl) _supFilterEl.addEventListener("change", () => { SUP_LAST_FILTER = _supFilterEl.value; loadSupport(); });
+  const _supRefresh = $("#btnSupRefresh");
+  if (_supRefresh) _supRefresh.addEventListener("click", loadSupport);
+  $("#supRows").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-tk]"); if (!b) return;
+    openTicket(b.getAttribute("data-tk"));
+  });
+
+  async function openTicket(id) {
+    openModal("modalTicket");
+    $("#tk_title").textContent = "Chamado";
+    $("#tk_body").innerHTML = `<p class="muted">Carregando…</p>`;
+    let d;
+    try { d = await api("/owner/support/tickets/" + encodeURIComponent(id)); }
+    catch (e) { $("#tk_body").innerHTML = `<p style="color:#ff9aa8">${esc(e.message)}</p>`; return; }
+    const t = d.ticket || {}, msgs = d.messages || [];
+    $("#tk_title").textContent = "Chamado #" + (t.ticket_no || "") + " — " + (t.subject || "");
+    const sla = supSla(t);
+    const thread = msgs.map((m) => {
+      const sup = m.author_role === "suporte";
+      return `<div style="display:flex;${sup ? "justify-content:flex-end" : ""};margin:8px 0">
+        <div style="max-width:80%;background:${sup ? "rgba(212,160,23,.12)" : "rgba(255,255,255,.04)"};border:1px solid ${sup ? "rgba(212,160,23,.35)" : "rgba(255,255,255,.10)"};border-radius:12px;padding:10px 12px">
+          <div class="small muted" style="margin-bottom:3px">${sup ? "Suporte" : "Cliente"} · ${esc(m.author_name || m.author_email || "")} · ${dtt(m.created_at)}</div>
+          <div style="white-space:pre-wrap;line-height:1.5">${esc(m.body || "")}</div>
+        </div></div>`;
+    }).join("");
+    const stOpts = Object.keys(SUP_ST).map((k) => `<option value="${k}"${t.status === k ? " selected" : ""}>${esc(SUP_ST[k])}</option>`).join("");
+    const prOpts = Object.keys(SUP_PR).map((k) => `<option value="${k}"${t.priority === k ? " selected" : ""}>${esc(SUP_PR[k])}</option>`).join("");
+    $("#tk_body").innerHTML = `
+      <div class="row c2" style="gap:10px;margin-bottom:6px">
+        <div class="card" style="margin:0">
+          <div class="small muted">Solicitante</div><div><b>${esc(t.opener_name || "—")}</b></div>
+          <div class="small">${esc(t.opener_email || "—")}</div>
+          <div class="small muted" style="margin-top:6px">Categoria</div><div class="small">${esc(supCat(t.category))}</div>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="small muted">Aberto em</div><div class="small">${dtt(t.created_at)}</div>
+          <div class="small muted" style="margin-top:6px">SLA de 1ª resposta</div><div>${slaPill(sla)}</div>
+          ${t.has_attachment ? `<div style="margin-top:8px"><button class="btn sm ghost" id="tk_att">📎 Baixar anexo (${esc(t.attachment_name || "arquivo")})</button></div>` : ""}
+        </div>
+      </div>
+      <h3 style="margin:14px 0 4px">Conversa</h3>
+      <div id="tk_thread" style="max-height:300px;overflow:auto;padding:2px;background:rgba(0,0,0,.12);border-radius:10px">${thread || '<p class="muted" style="padding:10px">Sem mensagens.</p>'}</div>
+      <h3 style="margin:14px 0 4px">Responder ao cliente</h3>
+      <textarea id="tk_reply" rows="4" placeholder="Escreva a resposta enviada ao solicitante (vai por e-mail e fica no histórico)…"></textarea>
+      <div class="row c2" style="gap:10px;margin-top:8px">
+        <div class="field"><label>Status após resposta</label><select id="tk_repst">${Object.keys(SUP_ST).map((k) => `<option value="${k}"${k === "aguardando_cliente" ? " selected" : ""}>${esc(SUP_ST[k])}</option>`).join("")}</select></div>
+        <div class="field" style="display:flex;align-items:flex-end"><button class="btn gold block" id="tk_send">Enviar resposta</button></div>
+      </div>
+      <hr style="border-color:rgba(255,255,255,.08);margin:14px 0">
+      <div class="row c2" style="gap:10px">
+        <div class="field"><label>Status</label><select id="tk_status">${stOpts}</select></div>
+        <div class="field"><label>Prioridade</label><select id="tk_prio">${prOpts}</select></div>
+      </div>
+      <button class="btn ghost sm" id="tk_save" style="margin-top:6px">Salvar status/prioridade</button>`;
+    const th = $("#tk_thread"); if (th) th.scrollTop = th.scrollHeight;
+    const att = $("#tk_att");
+    if (att) att.onclick = async () => {
+      try {
+        const a = await api("/owner/support/tickets/" + encodeURIComponent(id) + "/attachment");
+        const link = document.createElement("a");
+        link.href = "data:" + (a.type || "application/octet-stream") + ";base64," + a.data;
+        link.download = a.name || "anexo"; document.body.appendChild(link); link.click(); link.remove();
+      } catch (e) { toast(e.message); }
+    };
+    $("#tk_send").onclick = async () => {
+      const body = ($("#tk_reply").value || "").trim();
+      if (!body) return toast("Escreva a resposta.");
+      const btn = $("#tk_send"); btn.disabled = true;
+      try {
+        await api("/owner/support/tickets/" + encodeURIComponent(id) + "/reply", { method: "POST", body: JSON.stringify({ body, status: $("#tk_repst").value }) });
+        toast("Resposta enviada ao cliente."); openTicket(id); loadSupport();
+      } catch (e) { btn.disabled = false; toast(e.message); }
+    };
+    $("#tk_save").onclick = async () => {
+      const btn = $("#tk_save"); btn.disabled = true;
+      try {
+        await api("/owner/support/tickets/" + encodeURIComponent(id) + "/status", { method: "POST", body: JSON.stringify({ status: $("#tk_status").value, priority: $("#tk_prio").value }) });
+        toast("Chamado atualizado."); openTicket(id); loadSupport();
+      } catch (e) { btn.disabled = false; toast(e.message); }
+    };
+  }
+
+  // ===================================================================
   //  AUDITORIA (trilha completa)
   // ===================================================================
   const ACTION_LABELS = {
@@ -718,4 +946,8 @@
   // ---------- boot ----------
   $("#verBadge").textContent = "v" + PLATFORM_VERSION;
   show("dashboard");
+  // Service desk: alerta de novos chamados em qualquer aba (badge no menu + som).
+  supPoll();
+  setInterval(() => { if (!document.hidden) supPoll(); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) supPoll(); });
 })();

@@ -428,13 +428,14 @@ async function ownerRoutes(req, user, seg, method) {
 
   // ---- LICENCAS ----
   if (r === "licenses" && method === "GET") {
-    const rows = await sql`
+    const rows = await safe(sql`
       SELECT l.*, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
              t.status AS tenant_status, t.client_quota_override, p.name AS plan_name, p.tier AS plan_tier,
              (SELECT count(*)::int FROM clients c WHERE c.tenant_id=t.id) AS clients_count
       FROM licenses l JOIN tenants t ON t.id=l.tenant_id LEFT JOIN plans p ON p.id=l.plan_id
-      ORDER BY l.created_at DESC LIMIT 300`;
-    return ok({ licenses: rows.map(decorate), plans: await sql`SELECT id,name,tier,client_quota FROM plans WHERE id<>'owner' ORDER BY tier` });
+      ORDER BY l.created_at DESC LIMIT 300`, []);
+    const plans = await safe(sql`SELECT id,name,tier,client_quota FROM plans WHERE id<>'owner' ORDER BY tier`, []);
+    return ok({ licenses: rows.map(decorate), plans });
   }
   if (r === "licenses" && method === "POST") {
     const b = await readJson(req);
@@ -515,7 +516,7 @@ async function ownerRoutes(req, user, seg, method) {
 
   // ---- PAGAMENTOS / NOTAS ----
   if (r === "payments" && method === "GET") {
-    const rows = await sql`SELECT p.*, t.name AS tenant_name FROM payments p JOIN tenants t ON t.id=p.tenant_id ORDER BY p.created_at DESC LIMIT 200`;
+    const rows = await safe(sql`SELECT p.*, t.name AS tenant_name FROM payments p JOIN tenants t ON t.id=p.tenant_id ORDER BY p.created_at DESC LIMIT 200`, []);
     return ok({ payments: rows });
   }
   if (seg[1] === "payments" && seg[2] && seg[3] === "invoice" && method === "POST") {
@@ -527,7 +528,7 @@ async function ownerRoutes(req, user, seg, method) {
   // Cada compra traz toda a informacao da transacao + o modulo escolhido,
   // com botao "Gerar licenca" (1 clique) inerente ao modulo comprado.
   if (r === "purchases" && method === "GET") {
-    const rows = await sql`
+    const rows = await safe(sql`
       SELECT s.id AS subscription_id, s.status AS sub_status, s.billing_type, s.gateway,
              s.amount_cents, s.created_at, s.plan_id,
              t.id AS tenant_id, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
@@ -537,7 +538,7 @@ async function ownerRoutes(req, user, seg, method) {
              (SELECT pay.status FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS pay_status,
              EXISTS(SELECT 1 FROM licenses l WHERE l.tenant_id=t.id) AS has_license
       FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
-      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`;
+      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`, []);
     return ok({ purchases: rows });
   }
   // Gera a licenca inerente ao modulo comprado, a partir da assinatura.
@@ -560,16 +561,19 @@ async function ownerRoutes(req, user, seg, method) {
 
   // ---- AUDITORIA (trilha completa da area negocial: eventos + audit_log) ----
   if (r === "audit" && method === "GET") {
-    const events = await sql`SELECT 'license' AS kind, id::text AS id, created_at, event AS action, actor_email, tenant_id, note AS detail
-                             FROM license_events ORDER BY created_at DESC LIMIT 200`;
-    const logs = await sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail
-                           FROM audit_log ORDER BY created_at DESC LIMIT 200`;
+    const events = await safe(sql`SELECT 'license' AS kind, id::text AS id, created_at, event AS action, actor_email, tenant_id, note AS detail
+                             FROM license_events ORDER BY created_at DESC LIMIT 200`, []);
+    const logs = await safe(sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail
+                           FROM audit_log ORDER BY created_at DESC LIMIT 200`, []);
     const merged = [...events, ...logs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 300);
     return ok({ events: merged });
   }
 
   // ---- CRM (funil de vendas + atividades + campanhas de fidelizacao) ----
   if (seg[1] === "crm") return ownerCrmRoutes(req, user, seg.slice(2), method);
+
+  // ---- SERVICE DESK (fila de chamados, SLA, respostas, dashboards) ----
+  if (seg[1] === "support") return ownerSupportRoutes(req, user, seg.slice(2), method);
 
   // ---- DEMONSTRACAO ----
   if (r === "demo" && method === "GET") {
@@ -592,20 +596,30 @@ function decorate(lic) { return { ...lic, activation_link: L.activationLink(lic)
 //  cseg = caminho apos "owner/crm/" (ex.: ["contacts","<id>","activity"])
 // =====================================================================
 const CRM_STAGES = ["lead", "contato", "proposta", "ganho", "perdido", "cliente"];
+
+// Consulta de leitura tolerante a falha de schema. Se o banco estiver
+// parcialmente migrado (uma tabela/coluna ainda nao criada), NAO derruba o
+// painel inteiro: registra o erro no log e devolve um valor padrao seguro.
+// Usado nos paineis do dono (dashboard/CRM) — areas que nunca podem falhar.
+async function safe(promise, fallback) {
+  try { return await promise; }
+  catch (e) { console.error("[api:safe]", e?.message || e); return fallback; }
+}
 async function ownerCrmRoutes(req, user, cseg, method) {
   const head = cseg[0] || "";
 
   // ---- Indicadores do funil (para o dashboard do CRM) ----
   if (head === "stats" && method === "GET") {
-    const byStage = await sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value
-      FROM crm_contacts GROUP BY stage`;
-    const totals = await one(sql`SELECT
+    const byStage = await safe(sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value
+      FROM crm_contacts GROUP BY stage`, []);
+    const totals = await safe(one(sql`SELECT
       (SELECT count(*)::int FROM crm_contacts) AS contacts,
       (SELECT count(*)::int FROM crm_contacts WHERE stage='cliente') AS clients,
       (SELECT count(*)::int FROM crm_contacts WHERE next_action_at IS NOT NULL AND next_action_at < now() + interval '3 days') AS due_soon,
-      (SELECT count(*)::int FROM crm_campaigns) AS campaigns`);
+      (SELECT count(*)::int FROM crm_campaigns) AS campaigns`),
+      { contacts: 0, clients: 0, due_soon: 0, campaigns: 0 });
     const map = {}; CRM_STAGES.forEach(s => map[s] = { n: 0, value: 0 });
-    byStage.forEach(r => { map[r.stage] = { n: r.n, value: r.value }; });
+    (byStage || []).forEach(r => { if (map[r.stage]) map[r.stage] = { n: r.n, value: r.value }; });
     const won = map.ganho.n + map.cliente.n;
     const conversion = totals.contacts ? Math.round((won / totals.contacts) * 100) : 0;
     return ok({ byStage: map, totals, conversion, stages: CRM_STAGES });
@@ -633,8 +647,8 @@ async function ownerCrmRoutes(req, user, cseg, method) {
   if (head === "contacts" && !cseg[1] && method === "GET") {
     const stage = new URL(req.url).searchParams.get("stage");
     const rows = stage
-      ? await sql`SELECT * FROM crm_contacts WHERE stage=${stage} ORDER BY updated_at DESC LIMIT 500`
-      : await sql`SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 500`;
+      ? await safe(sql`SELECT * FROM crm_contacts WHERE stage=${stage} ORDER BY updated_at DESC LIMIT 500`, [])
+      : await safe(sql`SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 500`, []);
     return ok({ contacts: rows });
   }
   if (head === "contacts" && !cseg[1] && method === "POST") {
@@ -732,8 +746,259 @@ async function ownerCrmRoutes(req, user, cseg, method) {
   return fail("Rota de CRM nao encontrada: " + cseg.join("/"), 404);
 }
 
+// =====================================================================
+//  SERVICE DESK — suporte integrado (chamados/tickets)
+//  Abertos no app pelos assinantes/consultores e clientes; gerenciados
+//  pelo dono na fila "Suporte" (SLA, status, respostas, dashboards).
+// =====================================================================
+const TICKET_STATUSES  = ["aberto", "em_andamento", "aguardando_cliente", "resolvido", "fechado"];
+const TICKET_PRIORITIES = ["baixa", "normal", "alta", "urgente"];
+// Categorias de "provavel problema" oferecidas ao abrir o chamado.
+const TICKET_CATEGORIES = [
+  { id: "acesso",       label: "Acesso / login / senha" },
+  { id: "licenca",      label: "Licença / cobrança / upgrade" },
+  { id: "clientes",     label: "Cadastro de clientes / cota" },
+  { id: "documentos",   label: "Documentos / modelos / relatórios" },
+  { id: "questionario", label: "Assistente de adequação / questionários" },
+  { id: "incidentes",   label: "Incidentes / titulares" },
+  { id: "treinamento",  label: "Treinamentos / cursos" },
+  { id: "bug",          label: "Erro / comportamento inesperado" },
+  { id: "duvida",       label: "Dúvida de uso" },
+  { id: "sugestao",     label: "Sugestão / melhoria" },
+  { id: "outro",        label: "Outro" },
+];
+// SLA de 1a resposta (horas) por prioridade.
+const TICKET_SLA_HOURS = { urgente: 4, alta: 8, normal: 24, baixa: 48 };
+const SUPPORT_INBOX = () => process.env.SUPPORT_EMAIL || process.env.OWNER_EMAIL || null;
+
+function ticketCategoryLabel(id) {
+  const c = TICKET_CATEGORIES.find(x => x.id === id);
+  return c ? c.label : (id || "Outro");
+}
+// Anexo seguro: limita tamanho (~2,7MB base64 ~= 2MB binario) e normaliza campos.
+function sanitizeAttachment(att) {
+  if (!att || !att.data || !att.name) return null;
+  const data = String(att.data);
+  if (data.length > 2_700_000) throw httpError("Anexo muito grande (limite 2 MB).", 413);
+  return { name: String(att.name).slice(0, 180), type: String(att.type || "application/octet-stream").slice(0, 120), data };
+}
+function httpError(msg, status) { const e = new Error(msg); e.httpStatus = status; return e; }
+// Escape para conteudo em HTML de e-mail (evita injecao no corpo da mensagem).
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function ownerSupportRoutes(req, user, sseg, method) {
+  const head = sseg[0] || "";
+
+  // ---- Indicadores do service desk (dashboard de suporte) ----
+  if (head === "stats" && method === "GET") {
+    const byStatus = await safe(sql`SELECT status, count(*)::int AS n FROM support_tickets GROUP BY status`, []);
+    const byPriority = await safe(sql`SELECT priority, count(*)::int AS n FROM support_tickets GROUP BY priority`, []);
+    const totals = await safe(one(sql`SELECT
+      (SELECT count(*)::int FROM support_tickets) AS total,
+      (SELECT count(*)::int FROM support_tickets WHERE status IN ('aberto','em_andamento','aguardando_cliente')) AS open,
+      (SELECT count(*)::int FROM support_tickets WHERE status='aberto' AND first_response_at IS NULL) AS unanswered,
+      (SELECT count(*)::int FROM support_tickets WHERE last_actor='cliente' AND status NOT IN ('resolvido','fechado')) AS needs_reply,
+      (SELECT count(*)::int FROM support_tickets WHERE status='resolvido') AS resolved,
+      (SELECT count(*)::int FROM support_tickets WHERE created_at > now() - interval '7 days') AS last7,
+      (SELECT count(*)::int FROM support_tickets WHERE resolved_at IS NOT NULL AND resolved_at > now() - interval '7 days') AS resolved7`),
+      { total: 0, open: 0, unanswered: 0, needs_reply: 0, resolved: 0, last7: 0, resolved7: 0 });
+    // Tempo medio de 1a resposta (horas) nos chamados ja respondidos.
+    const frt = await safe(one(sql`SELECT coalesce(avg(EXTRACT(EPOCH FROM (first_response_at - created_at))/3600.0),0)::numeric(10,1) AS hours
+      FROM support_tickets WHERE first_response_at IS NOT NULL`), { hours: 0 });
+    // SLA: chamados sem 1a resposta cujo prazo ja estourou.
+    const breaching = await safe(sql`SELECT priority, count(*)::int AS n FROM support_tickets
+      WHERE first_response_at IS NULL AND status IN ('aberto','em_andamento')
+        AND created_at < now() - (CASE priority WHEN 'urgente' THEN interval '4 hours'
+          WHEN 'alta' THEN interval '8 hours' WHEN 'baixa' THEN interval '48 hours'
+          ELSE interval '24 hours' END)
+      GROUP BY priority`, []);
+    const sMap = {}; TICKET_STATUSES.forEach(s => sMap[s] = 0); (byStatus || []).forEach(r => { sMap[r.status] = r.n; });
+    const pMap = {}; TICKET_PRIORITIES.forEach(p => pMap[p] = 0); (byPriority || []).forEach(r => { pMap[r.priority] = r.n; });
+    const breachingTotal = (breaching || []).reduce((a, r) => a + r.n, 0);
+    return ok({ byStatus: sMap, byPriority: pMap, totals, avgFirstResponseHours: Number(frt.hours) || 0,
+      breaching: breachingTotal, statuses: TICKET_STATUSES, priorities: TICKET_PRIORITIES, slaHours: TICKET_SLA_HOURS });
+  }
+
+  // ---- FILA de chamados (ordem de abertura; filtros opcionais) ----
+  if (head === "tickets" && !sseg[1] && method === "GET") {
+    const url = new URL(req.url);
+    const status = url.searchParams.get("status");
+    const open = url.searchParams.get("open"); // "1" => somente em andamento
+    const rows = await safe(
+      status
+        ? sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+               FROM support_tickets t WHERE t.status=${status} ORDER BY t.created_at ASC LIMIT 500`
+        : open === "1"
+          ? sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+                 FROM support_tickets t WHERE t.status IN ('aberto','em_andamento','aguardando_cliente') ORDER BY t.created_at ASC LIMIT 500`
+          : sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+                 FROM support_tickets t ORDER BY t.created_at ASC LIMIT 500`,
+      []);
+    // Nao devolve o base64 do anexo na listagem (peso); so a flag de existencia.
+    const tickets = (rows || []).map(t => ({ ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }));
+    return ok({ tickets, slaHours: TICKET_SLA_HOURS, categories: TICKET_CATEGORIES });
+  }
+
+  // ---- DETALHE do chamado + conversa ----
+  if (head === "tickets" && sseg[1] && !sseg[2] && method === "GET") {
+    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
+    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages });
+  }
+
+  // ---- DOWNLOAD do anexo (base64) ----
+  if (head === "tickets" && sseg[1] && sseg[2] === "attachment" && method === "GET") {
+    const t = await one(sql`SELECT attachment_name, attachment_type, attachment_data FROM support_tickets WHERE id=${sseg[1]}`);
+    if (!t || !t.attachment_data) return fail("Sem anexo.", 404);
+    return ok({ name: t.attachment_name, type: t.attachment_type, data: t.attachment_data });
+  }
+
+  // ---- RESPONDER ao cliente (registra mensagem + e-mail) ----
+  if (head === "tickets" && sseg[1] && sseg[2] === "reply" && method === "POST") {
+    const b = await readJson(req);
+    if (!b.body || !String(b.body).trim()) return fail("Escreva a resposta.");
+    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    const newStatus = TICKET_STATUSES.includes(b.status) ? b.status : "aguardando_cliente";
+    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)})`;
+    await sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
+      first_response_at=coalesce(first_response_at, now()),
+      resolved_at=${newStatus === "resolvido" || newStatus === "fechado" ? new Date().toISOString() : null}
+      WHERE id=${t.id}`;
+    await audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
+      entity: "support_ticket", entityId: t.id, detail: { status: newStatus } });
+    if (t.opener_email) {
+      await sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
+        subject: `[Chamado #${t.ticket_no}] Resposta do suporte — ${t.subject}`,
+        type: "support",
+        html: `<p>Olá ${escapeHtml(t.opener_name || "")},</p>
+          <p>Há uma nova resposta no seu chamado <b>#${t.ticket_no}</b> (${escapeHtml(t.subject)}):</p>
+          <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
+          <p>Acesse a plataforma, menu <b>Suporte</b>, para acompanhar e responder.</p>
+          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` });
+    }
+    return ok({ ok: true, status: newStatus });
+  }
+
+  // ---- ALTERAR STATUS / PRIORIDADE ----
+  if (head === "tickets" && sseg[1] && sseg[2] === "status" && method === "POST") {
+    const b = await readJson(req);
+    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    const status = TICKET_STATUSES.includes(b.status) ? b.status : t.status;
+    const priority = TICKET_PRIORITIES.includes(b.priority) ? b.priority : t.priority;
+    const upd = await one(sql`UPDATE support_tickets SET status=${status}, priority=${priority}, updated_at=now(),
+      resolved_at=${status === "resolvido" || status === "fechado" ? new Date().toISOString() : null}
+      WHERE id=${t.id} RETURNING *`);
+    await audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_status_changed",
+      entity: "support_ticket", entityId: t.id, detail: { status, priority } });
+    return ok({ ticket: { ...upd, attachment_data: undefined, has_attachment: !!upd.attachment_name } });
+  }
+
+  return fail("Rota de suporte nao encontrada: " + sseg.join("/"), 404);
+}
+
+// Sub-rotas de suporte DENTRO do app (assinante/consultor e cliente abrem e
+// acompanham os proprios chamados). tenant = ambiente do solicitante.
+async function appSupportRoutes(req, user, tenant, sseg, method) {
+  const head = sseg[0] || "";
+
+  // Catalogo de categorias/prioridades para montar o formulario.
+  if (head === "meta" && method === "GET") {
+    return ok({ categories: TICKET_CATEGORIES, priorities: TICKET_PRIORITIES });
+  }
+
+  // Lista dos chamados do proprio tenant.
+  if (!head && method === "GET") {
+    const rows = await safe(sql`SELECT id, ticket_no, category, subject, priority, status, last_actor,
+        attachment_name, created_at, updated_at,
+        (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=support_tickets.id) AS msg_count
+      FROM support_tickets WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 200`, []);
+    return ok({ tickets: rows, categories: TICKET_CATEGORIES });
+  }
+
+  // Abrir um novo chamado.
+  if (!head && method === "POST") {
+    const b = await readJson(req);
+    const subject = String(b.subject || "").trim();
+    const description = String(b.description || "").trim();
+    if (!subject) return fail("Informe um assunto para o chamado.");
+    if (!description) return fail("Descreva o problema.");
+    const category = TICKET_CATEGORIES.some(c => c.id === b.category) ? b.category : "outro";
+    const priority = TICKET_PRIORITIES.includes(b.priority) ? b.priority : "normal";
+    const openerName = String(b.name || user.name || "").slice(0, 160) || (user.email || "");
+    const openerEmail = String(b.email || user.email || "").slice(0, 180) || null;
+    const att = sanitizeAttachment(b.attachment);
+    const t = await one(sql`INSERT INTO support_tickets
+      (tenant_id, opener_email, opener_name, category, subject, description, priority, status,
+       attachment_name, attachment_type, attachment_data, last_actor)
+      VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${description}, ${priority},
+        'aberto', ${att?.name || null}, ${att?.type || null}, ${att?.data || null}, 'cliente') RETURNING *`);
+    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${description})`;
+    await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
+      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority } });
+    // Notifica o suporte (dono).
+    const inbox = SUPPORT_INBOX();
+    if (inbox) {
+      await sendEmail({ tenantId: tenant.id, to: inbox,
+        subject: `[Chamado #${t.ticket_no}] ${ticketCategoryLabel(category)} — ${subject}`,
+        type: "support",
+        html: `<p><b>Novo chamado #${t.ticket_no}</b> (${escapeHtml(ticketCategoryLabel(category))}, prioridade ${escapeHtml(priority)})</p>
+          <p><b>De:</b> ${escapeHtml(openerName)} &lt;${escapeHtml(openerEmail || "")}&gt;<br>
+             <b>Ambiente:</b> ${escapeHtml(tenant.name || tenant.id)}</p>
+          <p><b>Assunto:</b> ${escapeHtml(subject)}</p>
+          <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(description).replace(/\n/g, "<br>")}</blockquote>
+          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)}</p>` : ""}
+          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` });
+    }
+    return ok({ ticketNo: t.ticket_no, id: t.id, status: t.status });
+  }
+
+  // Detalhe + conversa de um chamado do proprio tenant.
+  if (head && sseg[1] !== "reply" && method === "GET") {
+    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
+    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages });
+  }
+
+  // Cliente responde no proprio chamado.
+  if (head && sseg[1] === "reply" && method === "POST") {
+    const b = await readJson(req);
+    if (!b.body || !String(b.body).trim()) return fail("Escreva sua mensagem.");
+    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)})`;
+    const newStatus = t.status === "resolvido" || t.status === "fechado" ? "aberto" : t.status;
+    await sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`;
+    await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
+      entity: "support_ticket", entityId: t.id });
+    const inbox = SUPPORT_INBOX();
+    if (inbox) {
+      await sendEmail({ tenantId: tenant.id, to: inbox,
+        subject: `[Chamado #${t.ticket_no}] Resposta do cliente — ${t.subject}`,
+        type: "support",
+        html: `<p>O cliente respondeu no chamado <b>#${t.ticket_no}</b>:</p>
+          <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>` });
+    }
+    return ok({ ok: true });
+  }
+
+  return fail("Rota de suporte do app nao encontrada: " + sseg.join("/"), 404);
+}
+
 async function ownerDashboard() {
-  const totals = await one(sql`SELECT
+  // Cada bloco e tolerante a falha de schema (banco parcialmente migrado):
+  // uma tabela/coluna ausente degrada APENAS aquele indicador, sem derrubar
+  // o painel inteiro. Esta area de gestao nunca pode ficar inacessivel.
+  const totals = await safe(one(sql`SELECT
     (SELECT count(*)::int FROM tenants WHERE is_owner=FALSE) AS tenants,
     (SELECT count(*)::int FROM tenants WHERE status='active' AND is_owner=FALSE) AS active,
     (SELECT count(*)::int FROM tenants WHERE status IN ('suspended','blocked')) AS blocked,
@@ -741,32 +1006,33 @@ async function ownerDashboard() {
     (SELECT count(*)::int FROM licenses WHERE status='issued') AS pending_activation,
     (SELECT count(*)::int FROM clients c JOIN tenants t ON t.id=c.tenant_id WHERE t.is_owner=FALSE) AS clients_managed,
     (SELECT count(*)::int FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id
-       WHERE t.is_owner=FALSE AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS pending_purchases`);
-  const mrr = await one(sql`SELECT coalesce(sum(amount_cents),0)::int AS cents FROM subscriptions WHERE status='active'`);
-  const overdue = await sql`
+       WHERE t.is_owner=FALSE AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS pending_purchases`),
+    { tenants: 0, active: 0, blocked: 0, active_licenses: 0, pending_activation: 0, clients_managed: 0, pending_purchases: 0 });
+  const mrr = await safe(one(sql`SELECT coalesce(sum(amount_cents),0)::int AS cents FROM subscriptions WHERE status='active'`), { cents: 0 });
+  const overdue = await safe(sql`
     SELECT t.id, t.name, t.email, t.phone, t.status, s.current_period_end, s.billing_type, p.name AS plan_name
     FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
     WHERE t.is_owner=FALSE AND s.current_period_end IS NOT NULL
       AND s.current_period_end < now() + interval '7 days'
-    ORDER BY s.current_period_end ASC LIMIT 50`;
+    ORDER BY s.current_period_end ASC LIMIT 50`, []);
   // Distribuicao por modulo + receita ativa por modulo (area negocial).
-  const byPlan = await sql`SELECT t.plan_id, p.name, p.tier, count(*)::int AS n,
+  const byPlan = await safe(sql`SELECT t.plan_id, p.name, p.tier, count(*)::int AS n,
       coalesce(sum(CASE WHEN sub.status='active' THEN sub.amount_cents ELSE 0 END),0)::int AS revenue
     FROM tenants t LEFT JOIN plans p ON p.id=t.plan_id
     LEFT JOIN LATERAL (SELECT amount_cents, status FROM subscriptions s WHERE s.tenant_id=t.id ORDER BY created_at DESC LIMIT 1) sub ON TRUE
-    WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`;
+    WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`, []);
   // Status das licencas (para grafico de rosca/barras em CSS).
-  const licStatus = await sql`SELECT status, count(*)::int AS n FROM licenses GROUP BY status`;
+  const licStatus = await safe(sql`SELECT status, count(*)::int AS n FROM licenses GROUP BY status`, []);
   // Funil do CRM (resumo).
-  const crmFunnel = await sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value FROM crm_contacts GROUP BY stage`;
+  const crmFunnel = await safe(sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value FROM crm_contacts GROUP BY stage`, []);
   // Receita aprovada nos ultimos 6 meses (serie para mini-grafico de barras).
-  const revenue = await sql`
+  const revenue = await safe(sql`
     SELECT to_char(date_trunc('month', coalesce(paid_at, created_at)), 'YYYY-MM') AS ym,
            coalesce(sum(amount_cents),0)::int AS cents
     FROM payments WHERE status='approved' AND coalesce(paid_at, created_at) > now() - interval '6 months'
-    GROUP BY 1 ORDER BY 1`;
+    GROUP BY 1 ORDER BY 1`, []);
   // Atividade recente (trilha de auditoria resumida).
-  const recent = await sql`SELECT created_at, action, actor_email, tenant_id FROM audit_log ORDER BY created_at DESC LIMIT 8`;
+  const recent = await safe(sql`SELECT created_at, action, actor_email, tenant_id FROM audit_log ORDER BY created_at DESC LIMIT 8`, []);
   return ok({
     totals, mrrCents: mrr.cents, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
@@ -796,6 +1062,9 @@ async function appRoutes(req, user, tenant, seg, method) {
       user: { name: user.name, email: user.email, role: user.role },
       tenant: pubTenant(tenant) });
   }
+
+  // ---- SUPORTE (service desk): abrir/listar/responder os proprios chamados ----
+  if (head === "support") return appSupportRoutes(req, user, tenant, seg.slice(1), method);
 
   // ---- CLIENTES (todos os modulos; com cota) ----
   if (head === "clients" && !seg[1] && method === "GET") {

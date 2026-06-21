@@ -42,17 +42,28 @@ function splitStatements(text) {
 const statements = splitStatements(ddl);
 console.log(`→ Aplicando ${statements.length} statements em ${SCHEMA}…`);
 
+// O schema e 100% idempotente (CREATE/ALTER ... IF NOT EXISTS, seeds com
+// ON CONFLICT). Por isso NAO abortamos no primeiro erro: aplicamos TODOS os
+// statements e so depois relatamos as falhas. Assim, se um statement antigo
+// falhar, as tabelas seguintes (ex.: CRM) ainda sao criadas — evitando que o
+// painel/CRM quebrem por banco parcialmente migrado.
 let okCount = 0;
+const failures = [];
 for (const [i, stmt] of statements.entries()) {
   try {
     await sql.query(stmt);
     okCount++;
   } catch (e) {
+    failures.push({ n: i + 1, stmt: stmt.slice(0, 160), msg: e.message });
     console.error(`✗ Falha no statement #${i + 1}:\n${stmt.slice(0, 160)}…\n  ${e.message}`);
-    process.exit(1);
   }
 }
 
-console.log(`✓ Migração concluída: ${okCount}/${statements.length} statements aplicados.`);
+console.log(`✓ Migração: ${okCount}/${statements.length} statements aplicados.`);
+if (failures.length) {
+  console.error(`⚠ ${failures.length} statement(s) falharam (acima). Como o schema e idempotente, os demais foram aplicados; rode a migração de novo apos corrigir.`);
+}
 console.log("Próximo passo: defina a senha do dono via /api/auth/bootstrap-owner (veja DEPLOY.md).");
-process.exit(0);
+// Sai com erro apenas se NADA foi aplicado (banco inacessivel) — assim o build
+// da Netlify (npm run migrate || echo ...) continua mesmo com falha parcial.
+process.exit(okCount === 0 ? 1 : 0);

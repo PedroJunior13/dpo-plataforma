@@ -5158,6 +5158,7 @@ const GLOBAL_NAV=[
   {group:"Principal",items:[{id:"dashboard",label:"Dashboard",ico:"▣"},{id:"clients",label:"Clientes",ico:"▦"}]},
   {group:"Gestão",items:[{id:"incidentes",label:"Incidentes",ico:"⚠"},{id:"relatorios",label:"Relatórios",ico:"▤"}]},
   {group:"Conhecimento",items:[{id:"tutorial",label:"Tutorial de adequação",ico:"📚"},{id:"sobre",label:"Sobre o App",ico:"ℹ️"}]},
+  {group:"Suporte",items:[{id:"suporte",label:"Suporte",ico:"🛟"}]},
   {group:"Administração",items:[{id:"usuarios",label:"Usuários",ico:"◍",roles:["ADMIN"]},{id:"configuracoes",label:"Configurações",ico:"⚙"}]},
 ];
 const CLIENT_NAV=[
@@ -5276,6 +5277,139 @@ const VIEWS={};
 const loading=()=>el("content").innerHTML=`<div class="spinner">Carregando…</div>`;
 const STATUS_STYLE={RECEBIDO:"b-gray",EM_ANALISE:"b-amber",CONCLUIDO:"b-green",NEGADO:"b-red",ABERTO:"b-red",EM_TRATAMENTO:"b-amber",NOTIFICADO_ANPD:"b-purple",ENCERRADO:"b-green",BAIXA:"b-gray",MEDIA:"b-blue",ALTA:"b-amber",CRITICA:"b-red",PENDENTE:"b-gray",EM_ANDAMENTO:"b-amber",EM_ANDAMENTO_:"b-amber"};
 const sbadge=(s)=>badge((s||"").replaceAll("_"," "),STATUS_STYLE[s]||"b-gray");
+/* ===== Suporte (Service Desk integrado — backend real /api/app/support) =====
+   Abre chamados pela propria plataforma, gera nº de ticket e envia e-mail ao
+   suporte (dono). Usa o token SaaS (dpo_token ou ?support=) — independente do
+   "fake DB" local do app, pois aqui falamos com a API serverless real. */
+const SUP_TOKEN=()=>{ try{ var p=new URLSearchParams(location.search); var s=(p.get("support")||"").trim(); return s||localStorage.getItem("dpo_token")||""; }catch(_){ return localStorage.getItem("dpo_token")||""; } };
+const SUP_CAT_LABEL={acesso:"Acesso / login / senha",licenca:"Licença / cobrança / upgrade",clientes:"Cadastro de clientes / cota",documentos:"Documentos / modelos / relatórios",questionario:"Assistente de adequação / questionários",incidentes:"Incidentes / titulares",treinamento:"Treinamentos / cursos",bug:"Erro / comportamento inesperado",duvida:"Dúvida de uso",sugestao:"Sugestão / melhoria",outro:"Outro"};
+const SUP_STATUS_LABEL={aberto:"Aberto",em_andamento:"Em andamento",aguardando_cliente:"Aguardando você",resolvido:"Resolvido",fechado:"Fechado"};
+const SUP_STATUS_CLS={aberto:"b-red",em_andamento:"b-amber",aguardando_cliente:"b-blue",resolvido:"b-green",fechado:"b-gray"};
+const SUP_PRIO_LABEL={baixa:"Baixa",normal:"Normal",alta:"Alta",urgente:"Urgente"};
+const SUP_PRIO_CLS={baixa:"b-gray",normal:"b-blue",alta:"b-amber",urgente:"b-red"};
+function supCatLabel(id){ return SUP_CAT_LABEL[id]||id||"Outro"; }
+function supDateTime(iso){ try{ return new Date(iso).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(_){ return String(iso||""); } }
+async function supApi(path,opts){
+  opts=opts||{}; var tk=SUP_TOKEN();
+  if(!tk) throw new Error("Sessão da plataforma não encontrada. Faça login novamente para abrir chamados.");
+  var headers={"Authorization":"Bearer "+tk}; if(opts.body)headers["Content-Type"]="application/json";
+  var r=await fetch("/api/app/support"+path,{method:opts.method||"GET",headers:headers,body:opts.body});
+  var d=null; try{ d=await r.json(); }catch(_){ d=null; }
+  if(!r.ok||(d&&d.ok===false)) throw new Error((d&&d.error)||("Falha na comunicação com o suporte (HTTP "+r.status+")."));
+  return d;
+}
+function supFileToB64(file){
+  return new Promise(function(res,rej){ var rd=new FileReader(); rd.onload=function(){ try{ var s=String(rd.result||""); var i=s.indexOf(","); res(i>=0?s.slice(i+1):s); }catch(e){ rej(e); } }; rd.onerror=function(){ rej(new Error("Falha ao ler o arquivo selecionado.")); }; rd.readAsDataURL(file); });
+}
+function supStatusBadge(s){ return badge(SUP_STATUS_LABEL[s]||s,SUP_STATUS_CLS[s]||"b-gray"); }
+function supPrioBadge(p){ return badge("Prioridade: "+(SUP_PRIO_LABEL[p]||p),SUP_PRIO_CLS[p]||"b-gray"); }
+VIEWS["suporte"]=async()=>{
+  loading();
+  let data;
+  try{ data=await supApi(""); }
+  catch(e){
+    el("content").innerHTML=`<div class="card"><h3>🛟 Suporte</h3>
+      <div class="info-box" style="background:#fff5f5;border-color:#fecaca;margin-top:10px">${esc(e.message||"Não foi possível carregar o suporte.")}</div>
+      <button class="btn ghost" id="sup-retry" style="margin-top:12px">Tentar novamente</button></div>`;
+    var rb=el("sup-retry"); if(rb)rb.onclick=()=>go("suporte"); return;
+  }
+  const tickets=Array.isArray(data.tickets)?data.tickets:[];
+  const catOptions=Object.keys(SUP_CAT_LABEL).map(id=>`<option value="${id}">${esc(SUP_CAT_LABEL[id])}</option>`).join("");
+  const prioOptions=Object.keys(SUP_PRIO_LABEL).map(id=>`<option value="${id}"${id==="normal"?" selected":""}>${esc(SUP_PRIO_LABEL[id])}</option>`).join("");
+  const myName=(App.user&&App.user.name)||"";
+  const open=tickets.filter(t=>t.status!=="fechado"&&t.status!=="resolvido").length;
+  const listHtml=tickets.length?tickets.map(t=>`
+    <div class="card sup-row" data-tid="${esc(t.id)}" style="cursor:pointer;margin:0 0 10px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:700">#${esc(t.ticket_no)} · ${esc(t.subject)}</div>
+        <div class="muted" style="font-size:12px;margin-top:3px">${esc(supCatLabel(t.category))} · aberto em ${esc(supDateTime(t.created_at))}${t.attachment_name?" · 📎 anexo":""} · ${esc(t.msg_count||0)} mensagem(ns)</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">${supStatusBadge(t.status)} ${supPrioBadge(t.priority)}<br><button class="btn sm" style="margin-top:8px" data-open="${esc(t.id)}">Ver / responder →</button></div>
+    </div>`).join(""):`<div class="info-box">Você ainda não abriu nenhum chamado. Use o formulário acima para falar com o suporte.</div>`;
+  el("content").innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">🛟 Abrir um chamado de suporte</h3>
+      <p class="muted" style="margin-top:-4px">Fale diretamente com a equipe do DPO PJ Protection. Geramos um número de protocolo e respondemos por aqui e por e-mail.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>Seu nome</label><input type="text" id="sup-name" value="${esc(myName)}" placeholder="Como devemos te chamar"></div>
+        <div class="field"><label>Provável problema</label><select id="sup-cat">${catOptions}</select></div>
+        <div class="field"><label>Assunto</label><input type="text" id="sup-subject" placeholder="Resumo do chamado" maxlength="160"></div>
+        <div class="field"><label>Prioridade</label><select id="sup-prio">${prioOptions}</select></div>
+      </div>
+      <div class="field"><label>Descrição</label><textarea id="sup-desc" rows="5" placeholder="Descreva o que está acontecendo, passos para reproduzir, mensagens de erro, etc."></textarea></div>
+      <div class="field"><label>Anexo (opcional · até 2 MB)</label><input type="file" id="sup-file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.log"></div>
+      <button class="btn" id="sup-send">Abrir chamado</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:0 2px 10px">
+      <h3 style="margin:0">Meus chamados</h3>
+      <span class="muted" style="font-size:12px">${tickets.length} no total · ${open} em aberto</span>
+    </div>
+    ${listHtml}`;
+  // Submit
+  el("sup-send").onclick=async()=>{
+    const subject=(el("sup-subject").value||"").trim();
+    const description=(el("sup-desc").value||"").trim();
+    if(!subject)return toast("Informe um assunto para o chamado.",true);
+    if(!description)return toast("Descreva o problema.",true);
+    const btn=el("sup-send"); btn.disabled=true; const old=btn.textContent; btn.textContent="Enviando…";
+    try{
+      let attachment=null; const f=el("sup-file").files&&el("sup-file").files[0];
+      if(f){ if(f.size>2*1024*1024){ btn.disabled=false; btn.textContent=old; return toast("Anexo acima de 2 MB. Escolha um arquivo menor.",true); }
+        attachment={name:f.name,type:f.type||"application/octet-stream",data:await supFileToB64(f)}; }
+      const body=JSON.stringify({name:(el("sup-name").value||"").trim(),category:el("sup-cat").value,priority:el("sup-prio").value,subject,description,attachment});
+      const res=await supApi("",{method:"POST",body});
+      toast("Chamado #"+res.ticketNo+" aberto! Nossa equipe foi notificada.");
+      go("suporte");
+    }catch(e){ btn.disabled=false; btn.textContent=old; toast(e.message||"Não foi possível abrir o chamado.",true); }
+  };
+  // Abrir detalhe
+  el("content").querySelectorAll("[data-open]").forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); supOpenTicket(b.getAttribute("data-open")); });
+  el("content").querySelectorAll(".sup-row").forEach(r=>r.onclick=()=>supOpenTicket(r.getAttribute("data-tid")));
+};
+async function supOpenTicket(id){
+  loading();
+  let d;
+  try{ d=await supApi("/"+encodeURIComponent(id)); }
+  catch(e){ toast(e.message||"Chamado não encontrado.",true); return go("suporte"); }
+  const t=d.ticket||{}; const msgs=Array.isArray(d.messages)?d.messages:[];
+  const thread=msgs.map(m=>{
+    const mine=m.author_role==="cliente";
+    return `<div style="display:flex;${mine?"justify-content:flex-end":""};margin:8px 0">
+      <div style="max-width:78%;background:${mine?"#eef5ff":"#f6f7f9"};border:1px solid ${mine?"#cfe0ff":"#e6e8ec"};border-radius:12px;padding:10px 12px">
+        <div class="muted" style="font-size:11px;margin-bottom:3px">${mine?"Você":"Suporte DPO PJ"} · ${esc(m.author_name||m.author_email||"")} · ${esc(supDateTime(m.created_at))}</div>
+        <div style="white-space:pre-wrap;line-height:1.5">${esc(m.body||"")}</div>
+      </div></div>`;
+  }).join("");
+  const closed=t.status==="fechado";
+  el("content").innerHTML=`
+    <button class="btn ghost sm" id="sup-back" style="margin-bottom:12px">← Voltar aos meus chamados</button>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div><h3 style="margin:0">#${esc(t.ticket_no)} · ${esc(t.subject)}</h3>
+          <div class="muted" style="font-size:12px;margin-top:4px">${esc(supCatLabel(t.category))} · aberto em ${esc(supDateTime(t.created_at))}</div></div>
+        <div style="text-align:right">${supStatusBadge(t.status)} ${supPrioBadge(t.priority)}</div>
+      </div>
+      ${t.has_attachment?`<div class="info-box" style="margin-top:10px">📎 Anexo enviado: <strong>${esc(t.attachment_name||"arquivo")}</strong></div>`:""}
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">Conversa</h4>
+      <div id="sup-thread" style="max-height:420px;overflow:auto;padding:2px">${thread||'<p class="muted">Sem mensagens.</p>'}</div>
+      ${closed?`<div class="info-box" style="margin-top:12px">Este chamado está <strong>fechado</strong>. Abra um novo chamado se precisar de mais ajuda.</div>`:`
+      <div class="field" style="margin-top:12px"><label>Responder</label><textarea id="sup-reply" rows="3" placeholder="Escreva sua resposta…"></textarea></div>
+      <button class="btn" id="sup-reply-send">Enviar resposta</button>`}
+    </div>`;
+  el("sup-back").onclick=()=>go("suporte");
+  const th=el("sup-thread"); if(th)th.scrollTop=th.scrollHeight;
+  const rs=el("sup-reply-send");
+  if(rs)rs.onclick=async()=>{
+    const body=(el("sup-reply").value||"").trim();
+    if(!body)return toast("Escreva sua mensagem.",true);
+    rs.disabled=true; const old=rs.textContent; rs.textContent="Enviando…";
+    try{ await supApi("/"+encodeURIComponent(id)+"/reply",{method:"POST",body:JSON.stringify({body})});
+      toast("Resposta enviada."); supOpenTicket(id);
+    }catch(e){ rs.disabled=false; rs.textContent=old; toast(e.message||"Não foi possível enviar.",true); }
+  };
+}
 /* ===== Incidentes: fluxo, prazos legais e SLA (Art. 48 LGPD / Res. CD/ANPD 15/2024) ===== */
 const INC_STATUS_FLOW=["ABERTO","EM_TRATAMENTO","NOTIFICADO_ANPD","ENCERRADO"];
 const INC_STATUS_LBL={ABERTO:"Aberto",EM_TRATAMENTO:"Em tratamento",NOTIFICADO_ANPD:"Notificado à ANPD",ENCERRADO:"Encerrado"};
@@ -8655,6 +8789,29 @@ window.addEventListener("hashchange",handleHash);
       fetch("/api/app/bootstrap",{headers:{"Authorization":"Bearer "+authToken}})
         .then(function(r){return r.json();}).then(function(d){ if(d&&d.ok!==false)applyBootstrap(d); }).catch(function(){});
     }
+  }catch(e){}
+})();
+/* ===== Atalho do dono: VOLTAR AO PAINEL (sem encerrar a sessao) =====
+   Quando o DONO abre este ambiente pelo botao "Consultoria ↗" do Painel (fora
+   do modo suporte, que ja tem o seu proprio "Sair do suporte"), oferecemos um
+   botao fixo para retornar ao Painel sem precisar deslogar. Assinantes comuns
+   NAO veem este botao — so aparece quando a sessao SaaS e do dono (role OWNER).
+   Sincrono e autossuficiente: nao depende do bootstrap e nao e apagado pelos
+   re-renders do SPA (fixo, anexado ao body). */
+(function ownerBackToPanel(){
+  try{
+    var params=new URLSearchParams(location.search);
+    if((params.get("support")||"").trim()) return; // modo suporte ja tem saida propria
+    var s=null; try{ s=JSON.parse(localStorage.getItem("dpo_user")||"null"); }catch(_){}
+    if(!s || s.role!=="OWNER") return;
+    if(document.getElementById("saas-owner-back")) return;
+    var a=document.createElement("a");
+    a.id="saas-owner-back"; a.href="/painel"; a.title="Voltar ao Painel de gestao";
+    a.setAttribute("style","position:fixed;right:18px;top:14px;z-index:10000;display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#0c2c52,#143e74);color:#fff;border:1px solid rgba(212,160,23,.55);border-radius:999px;padding:9px 16px;font-size:13px;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(2,6,23,.38);font-family:inherit;line-height:1");
+    a.innerHTML="← Voltar ao Painel";
+    a.onmouseover=function(){ a.style.filter="brightness(1.12)"; };
+    a.onmouseout=function(){ a.style.filter=""; };
+    document.body.appendChild(a);
   }catch(e){}
 })();
 handleHash();

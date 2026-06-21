@@ -37,37 +37,39 @@
 <main class="wrap section-pad">
 <div class="doc">
   <h1>Tutorial operacional do dono — vendas e gestão</h1>
-  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.3.0</b>).
+  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.5.0</b>).
      Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
-     <b>Compras → gerar a licença em 1 clique</b>, suporte dentro do ambiente do cliente, CRM,
+     <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
      cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
 
   <div class="card toc" style="margin:18px 0">
     <b>Índice</b>
-    <a href="#painel">1. Visão geral do painel (as 6 abas)</a>
+    <a href="#painel">1. Visão geral do painel (as 7 abas)</a>
     <a href="#caminhos">2. Os dois caminhos de entrada do cliente</a>
     <a href="#compras">3. Compras → gerar a licença em 1 clique ⭐</a>
     <a href="#emitir">4. Emitir licença manualmente (venda assistida)</a>
     <a href="#ativacao">5. Ativação pelo cliente: Conta → 2FA → Licença ⭐</a>
     <a href="#gerenciar">6. Drawer “Gerenciar”: suporte, módulo/cota e kill-switch</a>
     <a href="#crm">7. CRM: funil, contatos, atividades e campanhas ⭐</a>
-    <a href="#dashboard">8. Painel (dashboard): leitura rápida do negócio</a>
-    <a href="#financeiro">9. Financeiro e NFS-e</a>
-    <a href="#cobranca">10. Cobrança automática e vencimentos</a>
-    <a href="#seguranca">11. Segurança: 2FA, bloqueio e blindagem ⭐</a>
-    <a href="#auditoria">12. Auditoria e versionamento</a>
-    <a href="#demo">13. Link de demonstração (7 dias)</a>
-    <a href="#checklist">14. Checklist rápido</a>
+    <a href="#suporte">8. Suporte (Service Desk): fila, SLA, alertas e respostas ⭐</a>
+    <a href="#dashboard">9. Painel (dashboard): leitura rápida do negócio</a>
+    <a href="#financeiro">10. Financeiro e NFS-e</a>
+    <a href="#cobranca">11. Cobrança automática e vencimentos</a>
+    <a href="#seguranca">12. Segurança: 2FA, bloqueio e blindagem ⭐</a>
+    <a href="#auditoria">13. Auditoria e versionamento</a>
+    <a href="#demo">14. Link de demonstração (7 dias)</a>
+    <a href="#checklist">15. Checklist rápido</a>
   </div>
 
   <!-- 1 -->
   <h2 id="painel">1. Visão geral do painel</h2>
-  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.3.0</span> ao lado do menu.</p>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.5.0</span> ao lado do menu.</p>
   <ul>
     <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
     <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
     <li><span class="tab">Licenças</span> — licenças &amp; assinantes unificados (status, upgrade/downgrade, suporte e acesso ao ambiente do cliente).</li>
     <li><span class="tab">CRM</span> <span class="new">NOVO</span> — funil de vendas, histórico de relacionamento e campanhas de fidelização.</li>
+    <li><span class="tab">Suporte</span> <span class="new">NOVO</span> — <b>Service Desk</b>: fila de chamados abertos pelos clientes/consultores, com SLA, alertas de novo chamado, status e resposta direta. O contador vermelho ao lado do nome mostra quantos chamados <b>aguardam sua resposta</b>.</li>
     <li><span class="tab">Financeiro</span> — pagamentos recebidos e emissão de NFS-e.</li>
     <li><span class="tab">Auditoria</span> — trilha imutável de tudo (licenças, suporte, segurança e administração).</li>
   </ul>
@@ -161,7 +163,39 @@
   <div class="note">O funil do CRM também aparece resumido no <span class="tab">Painel</span> (cartão “Funil de vendas”), com atalho <span class="btnref">Abrir CRM</span>.</div>
 
   <!-- 8 -->
-  <h2 id="dashboard">8. Painel (dashboard): leitura rápida do negócio</h2>
+  <h2 id="suporte">8. Suporte (Service Desk): fila, SLA, alertas e respostas <span class="new">NOVO</span></h2>
+  <p>O <b>Service Desk</b> é o canal oficial de suporte dentro da plataforma. O cliente (ou consultor) abre um chamado pelo próprio ambiente, e ele cai na sua fila com <b>número de protocolo</b>, prazo de resposta (<b>SLA</b>) e <b>alerta de novo chamado</b>. Tudo segue as boas práticas de softwares de service desk: identificação, priorização, SLA e histórico de conversa.</p>
+  <div class="flow">
+    <span class="b">Cliente abre chamado no app</span><span class="ar">→</span>
+    <span class="b">cai na aba Suporte (com alerta)</span><span class="ar">→</span>
+    <span class="b">você responde / muda status</span><span class="ar">→</span>
+    <span class="b">cliente vê a resposta</span><span class="ar">→</span>
+    <span class="b">Resolvido / Fechado</span>
+  </div>
+
+  <h3>8.1 Como o cliente abre um chamado</h3>
+  <p>No ambiente do cliente (<code>/app/</code>), no menu lateral existe o grupo <span class="tab">Suporte</span> → item <span class="btnref">🛟 Suporte</span>. Ali ele preenche: <b>Nome</b>, <b>Categoria</b> (11 tipos: acesso/login, 2FA, licença, cobrança, cadastro de clientes, dúvida de uso, erro/bug, sugestão, LGPD/jurídico, integração e outros), <b>Assunto</b>, <b>Prioridade</b> (Baixa, Normal, Alta, Urgente), <b>Descrição</b> e um <b>anexo opcional</b> (até 2 MB — print, documento). Ao enviar, ele recebe o <b>número do chamado</b> e a confirmação também sai por <b>e-mail</b>. No mesmo lugar ele acompanha “<b>Meus chamados</b>” e a conversa.</p>
+
+  <h3>8.2 A sua fila de chamados</h3>
+  <p>Na aba <span class="tab">Suporte</span> do painel você vê, no topo, os <b>KPIs</b>: <b>Aguardando sua resposta</b>, <b>Abertos</b>, <b>Em andamento</b>, <b>SLA estourado</b> e <b>Resolvidos</b>. Logo abaixo há dois mini-dashboards — <b>por status</b> e <b>por prioridade</b> — e a <b>fila</b> propriamente dita, ordenada por tempo de abertura. Cada linha mostra: <b># protocolo · Aberto (quando) · SLA · Ambiente (qual cliente) · Assunto · Categoria · Prioridade · Status · Ação</b>. Use o seletor <span class="btnref">Filtro</span> (abertos / todos / por status) e <span class="btnref">Atualizar</span> para recarregar.</p>
+  <div class="note ok"><b>Identificação de novos chamados:</b> todo chamado que <b>aguarda sua resposta</b> aparece com a etiqueta vermelha <b>● Novo / responder</b> e a linha fica destacada. Quando o chamado está esperando algo do cliente, a etiqueta é amarela <b>aguardando cliente</b>. Assim você bate o olho e sabe exatamente onde agir.</div>
+
+  <h3>8.3 Alertas de novo chamado</h3>
+  <ul>
+    <li><b>Contador no menu:</b> ao lado de <span class="tab">Suporte</span> aparece um <b>selo vermelho pulsante</b> com a quantidade de chamados aguardando você — visível de qualquer aba.</li>
+    <li><b>Aviso em tempo quase real:</b> o painel verifica a fila a cada <b>1 minuto</b>. Quando chega um chamado novo, você recebe um <b>aviso na tela (toast)</b>, um <b>bip sonoro</b> e, se autorizar, uma <b>notificação do sistema operacional</b> (mesmo com a aba em segundo plano).</li>
+  </ul>
+  <div class="note">Na primeira vez, o navegador pode pedir permissão para enviar notificações — autorize para receber os avisos do sistema operacional. O bip e o selo funcionam de qualquer forma.</div>
+
+  <h3>8.4 Respondendo e gerindo o SLA</h3>
+  <div class="step"><div class="n">1</div><div>Clique em <span class="btnref">Abrir</span> na linha do chamado. Abre a janela com os dados do <b>solicitante</b>, o <b>SLA</b> (tempo restante ou estourado para a 1ª resposta), o anexo (com botão de <b>baixar</b>) e a <b>conversa</b> completa.</div></div>
+  <div class="step"><div class="n">2</div><div>Escreva a resposta no campo de texto e clique em <span class="btnref">Enviar resposta</span>. O cliente passa a ver sua mensagem no ambiente dele e o chamado registra que a <b>1ª resposta</b> foi dada (encerra o relógio do SLA).</div></div>
+  <div class="step"><div class="n ok">3</div><div>Use o seletor de <b>status</b> para mover o chamado: <b>Aberto → Em andamento → Aguardando cliente → Resolvido → Fechado</b>. Também dá para ajustar a <b>prioridade</b>. Cada mudança fica registrada.</div></div>
+  <div class="note warn"><b>Prazos de 1ª resposta (SLA):</b> Urgente <b>4h</b> · Alta <b>8h</b> · Normal <b>24h</b> · Baixa <b>48h</b>. Quando o prazo vira, o chamado entra em <b>SLA estourado</b> (vermelho) no KPI e na linha — priorize esses.</div>
+  <div class="note ok">Tudo do Service Desk (abertura, resposta, mudança de status) entra na <span class="tab">Auditoria</span>. Funciona para <b>licenças de clientes e de consultores</b>.</div>
+
+  <!-- 9 -->
+  <h2 id="dashboard">9. Painel (dashboard): leitura rápida do negócio</h2>
   <ul>
     <li><b>KPIs clicáveis:</b> Assinantes · Compras a liberar · Licenças ativas · Clientes na operação · Receita recorrente (MRR).</li>
     <li><b>Receita aprovada</b> (gráfico dos últimos 6 meses) e <b>Status das licenças</b> (barras).</li>
@@ -170,12 +204,12 @@
     <li><b>Atividade recente:</b> últimos eventos, com atalho <span class="btnref">Ver auditoria</span>.</li>
   </ul>
 
-  <!-- 9 -->
-  <h2 id="financeiro">9. Financeiro e NFS-e</h2>
+  <!-- 10 -->
+  <h2 id="financeiro">10. Financeiro e NFS-e</h2>
   <p>Aba <span class="tab">Financeiro</span>: lista os pagamentos (Data, Cliente, Método, Valor, Status). Em pagamentos <b>aprovados/pagos</b>, o botão <span class="btnref">Emitir NFS-e</span> dispara a nota (quando a integração Focus NFe estiver configurada).</p>
 
-  <!-- 10 -->
-  <h2 id="cobranca">10. Cobrança automática e vencimentos</h2>
+  <!-- 11 -->
+  <h2 id="cobranca">11. Cobrança automática e vencimentos</h2>
   <p>Todos os dias o sistema, sozinho:</p>
   <ol>
     <li>Avisa o cliente <b>3 dias antes</b> do vencimento.</li>
@@ -184,8 +218,8 @@
     <li>Quando o pagamento é confirmado (webhook do gateway), <b>reativa automaticamente</b>.</li>
   </ol>
 
-  <!-- 11 -->
-  <h2 id="seguranca">11. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
+  <!-- 12 -->
+  <h2 id="seguranca">12. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
   <ul>
     <li><b>2FA obrigatório no cadastro</b> (item 5): todo assinante ativa a verificação em duas etapas antes de usar a plataforma.</li>
     <li><b>Bloqueio por tentativas de login:</b> após várias senhas erradas a conta é travada por um período. Aparece na <span class="tab">Auditoria</span> como <b>“Conta bloqueada (tentativas)”</b>.</li>
@@ -194,20 +228,20 @@
     <li><b>Recuperação de senha do cliente:</b> pelo drawer <span class="btnref">Gerenciar → Resetar senha</span> você gera uma senha temporária para o cliente (item 6.1).</li>
     <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
     <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
-    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.3.0</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.5.0</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
   </ul>
 
-  <!-- 12 -->
-  <h2 id="auditoria">12. Auditoria e versionamento</h2>
-  <p>Aba <span class="tab">Auditoria</span>: registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada e ações de CRM (contato, estágio, campanha).
+  <!-- 13 -->
+  <h2 id="auditoria">13. Auditoria e versionamento</h2>
+  <p>Aba <span class="tab">Auditoria</span>: registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada, <b>chamado de suporte aberto/respondido/status alterado (Service Desk)</b> e ações de CRM (contato, estágio, campanha).
      Cada licença tem um número de <b>versão</b> (<code>vN</code>) que incrementa a cada mudança de estado — rastreabilidade total para fins legais e de conformidade.</p>
 
-  <!-- 13 -->
-  <h2 id="demo">13. Link de demonstração (7 dias)</h2>
+  <!-- 14 -->
+  <h2 id="demo">14. Link de demonstração (7 dias)</h2>
   <p>No <span class="tab">Painel</span>, <span class="btnref">Link de demonstração</span> gera um ambiente completo com <b>clientes de exemplo</b> para o visitante percorrer o processo por <b>7 dias</b>. Ao gerar um novo link, o ambiente anterior é <b>apagado e recriado</b>.</p>
 
-  <!-- 14 -->
-  <h2 id="checklist">14. Checklist rápido</h2>
+  <!-- 15 -->
+  <h2 id="checklist">15. Checklist rápido</h2>
   <ol>
     <li><b>Pagou sozinho?</b> Aba <span class="tab">Compras</span> → <span class="btnref">Gerar licença</span> → enviar link/mensagem.</li>
     <li><b>Venda assistida?</b> <span class="btnref">+ Emitir licença</span> → preencher → <span class="btnref">Gerar licença e link</span> → enviar.</li>
@@ -215,11 +249,12 @@
     <li>Precisa ajudar? <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Acessar ambiente (suporte)</span> / <span class="btnref">Regenerar acesso</span> / <span class="btnref">Resetar 2FA</span>.</li>
     <li>Cliente cresceu? <span class="btnref">Aplicar módulo</span> ou <span class="btnref">Salvar cota</span> — sem perder dados.</li>
     <li>Relacionamento: <span class="tab">CRM</span> para funil, follow-ups e <span class="btnref">Campanhas</span> de retenção.</li>
+    <li>Chamado novo? <span class="tab">Suporte</span> (selo vermelho avisa) → <span class="btnref">Abrir</span> → <span class="btnref">Enviar resposta</span> → mudar status. Priorize os de <b>SLA estourado</b>.</li>
     <li>Dinheiro: <span class="tab">Financeiro</span> (NFS-e) e bloco <b>Vencimentos</b> com <span class="btnref">Cobrar</span> em 1 clique.</li>
     <li>Conformidade: <span class="tab">Auditoria</span> registra tudo.</li>
   </ol>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.3.0.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.5.0.</p>
 </div>
 </main>
 </body>

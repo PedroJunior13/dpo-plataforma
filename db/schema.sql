@@ -388,3 +388,50 @@ CREATE TABLE IF NOT EXISTS support_sessions (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_support_sessions_tenant ON support_sessions(tenant_id);
+
+-- =====================================================================
+--  SECAO 14 — SERVICE DESK (suporte integrado)
+--  Chamados abertos por assinantes (consultores) e clientes dentro da
+--  propria plataforma. Caem na fila do dono (area "Suporte"), com SLA,
+--  status, respostas e dashboards. Tudo idempotente.
+-- =====================================================================
+-- Numero sequencial humano do ticket (ex.: #1001, #1002...).
+CREATE SEQUENCE IF NOT EXISTS support_ticket_no_seq START 1001;
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticket_no       BIGINT NOT NULL DEFAULT nextval('support_ticket_no_seq'),
+  tenant_id       UUID REFERENCES tenants(id) ON DELETE SET NULL, -- quem abriu (licenca)
+  opener_email    TEXT,
+  opener_name     TEXT,
+  category        TEXT NOT NULL DEFAULT 'outro',  -- provavel problema (lista no app)
+  subject         TEXT NOT NULL,
+  description     TEXT,
+  priority        TEXT NOT NULL DEFAULT 'normal'
+                  CHECK (priority IN ('baixa','normal','alta','urgente')),
+  status          TEXT NOT NULL DEFAULT 'aberto'
+                  CHECK (status IN ('aberto','em_andamento','aguardando_cliente','resolvido','fechado')),
+  attachment_name TEXT,
+  attachment_type TEXT,
+  attachment_data TEXT,                  -- base64 (anexo pequeno; cap no app)
+  first_response_at TIMESTAMPTZ,         -- 1a resposta do suporte (para SLA)
+  resolved_at     TIMESTAMPTZ,
+  last_actor      TEXT,                  -- 'cliente' | 'suporte' (quem falou por ultimo)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status  ON support_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant  ON support_tickets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_created ON support_tickets(created_at);
+
+-- Conversa do chamado (cliente <-> suporte).
+CREATE TABLE IF NOT EXISTS support_ticket_messages (
+  id           BIGSERIAL PRIMARY KEY,
+  ticket_id    UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+  author_role  TEXT NOT NULL DEFAULT 'cliente' CHECK (author_role IN ('cliente','suporte')),
+  author_email TEXT,
+  author_name  TEXT,
+  body         TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_support_ticket_msgs_ticket ON support_ticket_messages(ticket_id);
