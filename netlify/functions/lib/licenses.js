@@ -1,7 +1,7 @@
 // Motor de licenciamento: emissao, ativacao, suspensao, upgrade, cotas
 // e o KILL-SWITCH (gating server-side por inadimplencia).
 import { sql, one } from "./db.js";
-import { genLicenseKey, genActivationToken } from "./auth.js";
+import { genLicenseKey, genActivationToken, genTempPassword, hashPassword } from "./auth.js";
 import { licenseEvent } from "./audit.js";
 
 const GRACE_DAYS = parseInt(process.env.GRACE_DAYS || "5", 10);
@@ -240,6 +240,23 @@ export async function resetTenantMfa({ tenantId, actor }) {
   const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
   if (lic) await licenseEvent({ licenseId: lic.id, tenantId, event: "sent", actorEmail: actor?.email, note: "MFA do cliente resetado pelo suporte." });
   return { ok: true };
+}
+
+// Redefine a senha do usuario principal do cliente (suporte). Gera uma senha
+// temporaria forte, devolvida UMA vez ao dono para repassar (WhatsApp/e-mail).
+// Alvo: o ADMIN mais antigo do tenant (o titular). O 2FA do cliente continua valendo.
+export async function resetTenantPassword({ tenantId, actor }) {
+  const u = await one(sql`
+    SELECT id, email FROM users WHERE tenant_id=${tenantId}
+    ORDER BY (role='ADMIN') DESC, created_at ASC LIMIT 1`);
+  if (!u) throw new Error("Nenhum usuario vinculado a este cliente.");
+  const temp = genTempPassword();
+  await sql`UPDATE users SET password_hash=${hashPassword(temp)} WHERE id=${u.id}`;
+  // Destrava eventual bloqueio por tentativas (nao-fatal se as colunas nao existirem).
+  try { await sql`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=${u.id}`; } catch {}
+  const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
+  if (lic) await licenseEvent({ licenseId: lic.id, tenantId, event: "sent", actorEmail: actor?.email, note: "Senha do cliente redefinida pelo suporte (senha temporaria)." });
+  return { email: u.email, tempPassword: temp };
 }
 
 // ---------------------------------------------------------------

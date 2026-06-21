@@ -36,6 +36,9 @@
       Recebeu um link de ativação? <a href="/ativar">Ative seu acesso</a><br>
       Quer contratar? <a href="/checkout.html">Ver módulos e planos</a>
     </p>
+    <p class="small center muted" style="margin-top:6px;opacity:.75">
+      É o dono e perdeu o acesso? <a href="/owner-setup.html">Recuperar acesso do dono</a>
+    </p>
   </div>
 </div>
 
@@ -91,7 +94,14 @@
         body: JSON.stringify({ email: $("#email").value.trim(), password: $("#password").value }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok === false) throw new Error(data.error || "Falha no login.");
+      if (!res.ok || data.ok === false) {
+        // Erro de configuração do servidor (ex.: JWT_SECRET) não é "senha errada".
+        if (data.code === "SERVER_MISCONFIG") {
+          throw new Error((data.error || "Configuração do servidor incompleta.") +
+            " Isso é uma configuração do servidor — não é a sua senha.");
+        }
+        throw new Error(data.error || "Falha no login.");
+      }
       if (data.mfaRequired) { mfaToken = data.mfaToken; showMfaStep(); return; }
       finish(data);
     } catch (e) { showErr(e.message); }

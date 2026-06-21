@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.2.0";
+  const PLATFORM_VERSION = "2.3.0";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -403,6 +403,7 @@
         <button class="btn sm ghost" id="mb_send">Enviar/Copiar link</button>
         <button class="btn sm ghost" id="mb_regen">Regenerar acesso</button>
         <button class="btn sm ghost" id="mb_resetmfa">Resetar 2FA</button>
+        <button class="btn sm ghost" id="mb_resetpass">Resetar senha</button>
       </div>
 
       <h3 style="margin-top:14px">Módulo & cota</h3>
@@ -463,6 +464,17 @@
       if (!confirm("Resetar o 2FA (MFA) deste cliente? Ele poderá reconfigurar no próximo login.")) return;
       try { await api(`/owner/tenants/${tid}/reset-mfa`, { method: "POST" }); out(`<span class="tag active">2FA resetado</span>`); }
       catch (e) { out(`<span style="color:#ff9aa8">${esc(e.message)}</span>`); }
+    };
+    $("#mb_resetpass").onclick = async () => {
+      if (!confirm("Gerar uma senha temporária para este cliente? A senha atual deixa de valer (o 2FA continua valendo).")) return;
+      try {
+        const r = await api(`/owner/tenants/${tid}/reset-password`, { method: "POST" });
+        const wa = r.whatsapp ? ` &nbsp;·&nbsp; <a href="${esc(r.whatsapp)}" target="_blank" rel="noopener">Enviar por WhatsApp</a>` : "";
+        out(`<span class="tag active">Senha redefinida</span><br>
+             <div style="margin-top:6px">E-mail: <strong>${esc(r.email)}</strong><br>
+             Senha temporária: <code style="font-size:14px;user-select:all">${esc(r.tempPassword)}</code></div>
+             <p class="small muted" style="margin-top:6px">Anote e repasse agora — não será exibida de novo.${wa}</p>`);
+      } catch (e) { out(`<span style="color:#ff9aa8">${esc(e.message)}</span>`); }
     };
     $("#mb_saveplan").onclick = async () => {
       try { await api(`/owner/tenants/${tid}/plan`, { method: "POST", body: JSON.stringify({ planId: $("#mb_plan").value }) }); toast("Módulo alterado."); refresh(); }
@@ -671,6 +683,7 @@
   // ===================================================================
   const ACTION_LABELS = {
     login: "Login", login_locked: "Conta bloqueada (tentativas)", owner_bootstrap: "Senha do dono definida",
+    owner_bootstrap_denied: "Recuperação do dono negada (token inválido)", password_reset_by_support: "Senha redefinida (suporte)",
     checkout_created: "Compra (checkout)", license_issued: "Licença emitida", license_issued_from_purchase: "Licença gerada da compra",
     license_activated: "Licença ativada", plan_changed: "Módulo alterado", tenant_created: "Assinante criado",
     tenant_inactivated: "Cliente inativado", tenant_reactivated: "Cliente reativado",

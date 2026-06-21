@@ -36,6 +36,8 @@ export default async function handler(req) {
     if (path === "auth/signup" && method === "POST") return signup(req);
     if (path === "auth/activate" && method === "POST") return activate(req);
     if (path === "auth/bootstrap-owner" && method === "POST") return bootstrapOwner(req);
+    // Status do bootstrap (sem segredo): so informa se a recuperacao esta habilitada.
+    if (path === "auth/bootstrap-status" && method === "GET") return ok({ available: !!process.env.BOOTSTRAP_TOKEN });
     if (path === "checkout" && method === "POST") return checkout(req);
 
     // -------- AUTENTICADO --------
@@ -75,6 +77,11 @@ export default async function handler(req) {
 
   } catch (e) {
     console.error("[api]", path, e);
+    // Erro de configuracao do servidor (ex.: JWT_SECRET ausente): mensagem clara,
+    // sem vazar stack, para nao confundir com "senha invalida".
+    if (/JWT_SECRET/.test(e?.message || "")) {
+      return fail("Servidor sem JWT_SECRET configurado. Defina a variavel de ambiente no Netlify e tente de novo.", 500, { code: "SERVER_MISCONFIG" });
+    }
     const code = e.httpStatus || (e.code === "QUOTA_EXCEEDED" ? 409 : 400);
     return fail(e.message || "Erro interno.", code, e.code ? { code: e.code } : {});
   }
@@ -90,6 +97,10 @@ async function listPlans() {
 }
 
 async function login(req) {
+  // Config critica ausente => erro claro (e nao "senha invalida", que confunde).
+  if (!process.env.JWT_SECRET) {
+    return fail("Servidor sem JWT_SECRET configurado. Defina a variavel de ambiente no Netlify e tente de novo.", 500, { code: "SERVER_MISCONFIG" });
+  }
   const { email, password } = await readJson(req);
   const u = await one(sql`SELECT * FROM users WHERE lower(email)=lower(${email || ""})`);
   // Resposta generica p/ usuario inexistente (nao revela se o e-mail existe).
@@ -103,8 +114,8 @@ async function login(req) {
     return fail("E-mail ou senha invalidos.", 401);
   }
   if (!u.active) return forbidden("Usuario inativo.");
-  // Sucesso: zera contador de falhas.
-  await sql`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=${u.id}`;
+  // Sucesso: zera contador de falhas (bookkeeping NUNCA derruba um login valido).
+  await clearLoginFailures(u.id);
   // 2FA: se habilitado, devolve um desafio curto em vez do token de sessao.
   if (u.mfa_enabled && u.mfa_secret) {
     return ok({ mfaRequired: true, mfaToken: await makeMfaChallenge(u) });
@@ -112,16 +123,27 @@ async function login(req) {
   return finishLogin(u, req);
 }
 
+// Zera o contador de falhas. Resiliente: se o banco estiver parcialmente migrado
+// (colunas failed_logins/locked_until ausentes), falha em silencio sem bloquear o
+// login — a senha (e o MFA) ja foram validados antes deste ponto.
+async function clearLoginFailures(id) {
+  try { await sql`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=${id}`; }
+  catch (e) { console.warn("[login] clearLoginFailures nao-fatal:", e.message); }
+}
+
 // Incrementa o contador de falhas e trava a conta ao atingir o limite.
+// Resiliente: uma falha de escrita aqui nunca deve mascarar a resposta de login.
 async function registerFailedLogin(u, req) {
-  const n = (u.failed_logins || 0) + 1;
-  if (n >= MAX_FAILED_LOGINS) {
-    const until = new Date(Date.now() + LOCKOUT_MINUTES * 60000).toISOString();
-    await sql`UPDATE users SET failed_logins=${n}, locked_until=${until} WHERE id=${u.id}`;
-    await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login_locked", detail: { attempts: n }, ip: clientIp(req) });
-  } else {
-    await sql`UPDATE users SET failed_logins=${n} WHERE id=${u.id}`;
-  }
+  try {
+    const n = (u.failed_logins || 0) + 1;
+    if (n >= MAX_FAILED_LOGINS) {
+      const until = new Date(Date.now() + LOCKOUT_MINUTES * 60000).toISOString();
+      await sql`UPDATE users SET failed_logins=${n}, locked_until=${until} WHERE id=${u.id}`;
+      await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login_locked", detail: { attempts: n }, ip: clientIp(req) });
+    } else {
+      await sql`UPDATE users SET failed_logins=${n} WHERE id=${u.id}`;
+    }
+  } catch (e) { console.warn("[login] registerFailedLogin nao-fatal:", e.message); }
 }
 
 async function mfaVerify(req) {
@@ -137,8 +159,17 @@ async function mfaVerify(req) {
 
 async function finishLogin(u, req) {
   const ip = clientIp(req);
-  await sql`UPDATE users SET last_login=now(), last_login_at=now(), last_login_ip=${ip}, failed_logins=0, locked_until=NULL WHERE id=${u.id}`;
-  await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login", ip });
+  // Bookkeeping resiliente: registra tudo; se as colunas novas faltarem (banco
+  // parcialmente migrado), cai para o minimo (last_login) e, no pior caso, segue
+  // sem bloquear a sessao. Emitir o token de uma autenticacao valida e prioridade.
+  try {
+    await sql`UPDATE users SET last_login=now(), last_login_at=now(), last_login_ip=${ip}, failed_logins=0, locked_until=NULL WHERE id=${u.id}`;
+  } catch (e) {
+    console.warn("[login] bookkeeping completo falhou, tentando minimo:", e.message);
+    try { await sql`UPDATE users SET last_login=now() WHERE id=${u.id}`; }
+    catch (e2) { console.warn("[login] bookkeeping minimo falhou (nao-fatal):", e2.message); }
+  }
+  try { await audit({ tenantId: u.tenant_id, actorEmail: u.email, action: "login", ip }); } catch {}
   return ok({ token: await makeToken(u), user: pubUser(u) });
 }
 
@@ -194,17 +225,44 @@ async function activate(req) {
   return ok({ token: await makeToken(u), license: lic, user: pubUser(u) });
 }
 
-// Define a senha do dono na 1a vez (protegido por BOOTSTRAP_TOKEN).
+// Define/redefine a senha do dono (protegido por BOOTSTRAP_TOKEN). Serve tanto
+// para o 1o acesso quanto para recuperacao posterior — basta reativar o token.
 async function bootstrapOwner(req) {
   const { token, password } = await readJson(req);
-  if (!process.env.BOOTSTRAP_TOKEN) return fail("Bootstrap desativado.", 403);
-  if (token !== process.env.BOOTSTRAP_TOKEN) return forbidden("Token de bootstrap invalido.");
+  if (!process.env.BOOTSTRAP_TOKEN) {
+    return fail("Recuperacao desativada. Configure BOOTSTRAP_TOKEN no Netlify (Environment variables) e tente de novo.", 403, { code: "BOOTSTRAP_DISABLED" });
+  }
+  if (token !== process.env.BOOTSTRAP_TOKEN) {
+    try { await audit({ tenantId: null, actorEmail: process.env.OWNER_EMAIL || "pedrobj@gmail.com", action: "owner_bootstrap_denied", ip: clientIp(req) }); } catch {}
+    return forbidden("Token de recuperacao invalido.");
+  }
   if (!password || String(password).length < 10) return fail("Defina uma senha forte (10+ caracteres).");
-  const email = process.env.OWNER_EMAIL || "pedrobj@gmail.com";
-  const u = await one(sql`UPDATE users SET password_hash=${hashPassword(password)} WHERE lower(email)=lower(${email}) RETURNING *`);
-  if (!u) return fail("Usuario dono nao encontrado (rode a migracao do banco).", 404);
-  await audit({ tenantId: u.tenant_id, actorEmail: email, action: "owner_bootstrap" });
-  return ok({ message: "Senha do dono definida. Faca login.", email });
+  const email = (process.env.OWNER_EMAIL || "pedrobj@gmail.com").toLowerCase();
+  const hash = hashPassword(password);
+  // Caso comum: o dono ja foi semeado — define a senha preservando o vinculo.
+  let u = await one(sql`UPDATE users SET password_hash=${hash}, role='OWNER', active=TRUE
+                        WHERE lower(email)=lower(${email}) RETURNING *`);
+  if (!u) {
+    // Defensivo: o seed do dono ainda nao rodou — cria o usuario dono.
+    try {
+      u = await one(sql`INSERT INTO users (email, name, role, active, password_hash)
+                        VALUES (${email}, 'Pedro (Dono)', 'OWNER', TRUE, ${hash})
+                        ON CONFLICT (email) DO UPDATE SET password_hash=EXCLUDED.password_hash, role='OWNER', active=TRUE
+                        RETURNING *`);
+    } catch (e) {
+      console.error("[bootstrap] criacao do dono falhou:", e.message);
+      return fail("Usuario dono nao encontrado e nao foi possivel cria-lo. Rode a migracao do banco (db/schema.sql) e tente de novo.", 500, { code: "OWNER_MISSING" });
+    }
+  }
+  // Vincula o tenant do dono, se existir, sem falhar caso ainda nao haja.
+  try {
+    const ot = await one(sql`SELECT id FROM tenants WHERE id='00000000-0000-0000-0000-000000000001'`);
+    if (ot && !u.tenant_id) { await sql`UPDATE users SET tenant_id=${ot.id} WHERE id=${u.id}`; u.tenant_id = ot.id; }
+  } catch {}
+  // Destrava eventual bloqueio por tentativas (nao-fatal).
+  try { await sql`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=${u.id}`; } catch {}
+  await audit({ tenantId: u.tenant_id, actorEmail: email, action: "owner_bootstrap", ip: clientIp(req) });
+  return ok({ message: "Senha do dono definida. Faca login em / (e ative o 2FA na aba Conta).", email });
 }
 
 async function me(user) {
@@ -445,6 +503,14 @@ async function ownerRoutes(req, user, seg, method) {
     await L.resetTenantMfa({ tenantId: seg[2], actor: user });
     await audit({ tenantId: seg[2], actorEmail: user.email, action: "mfa_reset_by_support", entity: "tenant", entityId: seg[2], ip: clientIp(req) });
     return ok({ ok: true });
+  }
+  // Redefinir senha do cliente (gera senha temporaria) — suporte do dono.
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "reset-password" && method === "POST") {
+    const res = await L.resetTenantPassword({ tenantId: seg[2], actor: user });
+    await audit({ tenantId: seg[2], actorEmail: user.email, action: "password_reset_by_support", entity: "tenant", entityId: seg[2], ip: clientIp(req) });
+    const t = await one(sql`SELECT phone FROM tenants WHERE id=${seg[2]}`);
+    const msg = `Sua senha de acesso a plataforma DPO PJ Protection foi redefinida.\n\nE-mail: ${res.email}\nSenha temporaria: ${res.tempPassword}\n\nAcesse e troque a senha assim que entrar. Seu 2FA continua valendo.`;
+    return ok({ email: res.email, tempPassword: res.tempPassword, message: msg, whatsapp: t?.phone ? waLink(t.phone, msg) : null });
   }
 
   // ---- PAGAMENTOS / NOTAS ----

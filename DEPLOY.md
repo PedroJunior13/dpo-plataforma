@@ -109,16 +109,25 @@ Veja `.env.example` para a lista completa. Mínimo para subir:
 ## 3. Subir no Netlify
 
 1. Conecte o repositório no Netlify. O `netlify.toml` já define:
-   - `base = "saas-netlify"`, `publish = "public"`, funções em `netlify/functions`.
-   - Redirects: `/api/*`, `/webhooks/{mercadopago,stripe,pagarme}`, `/painel`, `/ativar`.
+   - **Sem `base`** — o conteúdo de `saas-netlify/` vai na **raiz** do repositório, então a
+     raiz do repo já é a raiz do projeto. Use `publish = "public"` e funções em `netlify/functions`.
+   - Redirects: `/api/*`, `/webhooks/{mercadopago,stripe,pagarme}`, `/painel`, `/ativar`, `/demo`.
 2. Deploy. As funções são empacotadas automaticamente (esbuild).
 
 ---
 
-## 4. Definir a senha do dono (1ª vez)
+## 4. Definir / recuperar a senha do dono
 
-Você define a senha — o sistema nunca a recebe de terceiros. Com o
-`BOOTSTRAP_TOKEN` configurado, chame uma vez:
+Você define a senha — o sistema nunca a recebe de terceiros. Exige o
+`BOOTSTRAP_TOKEN` configurado no Netlify (Environment variables).
+
+**Opção A — pela tela (recomendado).** Acesse **`/owner-setup.html`** (também há o
+link _“Recuperar acesso do dono”_ no rodapé da tela de login `/`). Informe o
+`BOOTSTRAP_TOKEN` e a nova senha (10+ caracteres). Serve tanto para o **1º acesso**
+quanto para **recuperação** caso você perca a senha. A página detecta sozinha se a
+recuperação está habilitada (consulta `GET /api/auth/bootstrap-status`).
+
+**Opção B — por linha de comando.**
 
 ```bash
 curl -X POST https://SEU-SITE/api/auth/bootstrap-owner \
@@ -126,8 +135,17 @@ curl -X POST https://SEU-SITE/api/auth/bootstrap-owner \
   -d '{"token":"SEU_BOOTSTRAP_TOKEN","password":"sua-senha-forte-10+"}'
 ```
 
-Depois **remova/expire o `BOOTSTRAP_TOKEN`** e faça login em `/` →
-você cai no painel `/painel`.
+Em ambos os casos o backend faz **UPSERT** do dono (cria se o seed ainda não rodou),
+vincula o tenant do dono e destrava qualquer bloqueio por tentativas. Depois faça
+login em `/` → você cai no painel `/painel` e ativa o 2FA na aba **Conta**.
+
+> **Mantenha o `BOOTSTRAP_TOKEN` definido** se quiser poder recuperar o acesso do dono
+> pela tela no futuro. Se preferir blindar ao máximo, remova-o após o 1º acesso e
+> redefina temporariamente quando precisar recuperar.
+
+**Recuperar a senha de um cliente:** no painel, **Licenças → Gerenciar →
+“Resetar senha”** gera uma senha temporária forte (exibida uma vez, com envio por
+WhatsApp). O 2FA do cliente continua valendo. Registrado na Auditoria.
 
 ---
 

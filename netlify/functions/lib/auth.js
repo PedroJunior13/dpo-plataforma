@@ -1,5 +1,5 @@
 // Autenticacao: senha (scrypt nativo) + JWT (jose, HS256).
-import { scryptSync, randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
+import { scryptSync, randomBytes, timingSafeEqual, randomUUID, randomInt } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 12; // 12h
@@ -129,3 +129,18 @@ export function genLicenseKey() {
 }
 export function genActivationToken() { return randomBytes(24).toString("base64url"); }
 export const uuid = randomUUID;
+
+// Senha temporaria forte e legivel (suporte/reset). Sem caracteres ambiguos
+// (0/O/1/l/I). Garante ao menos 1 maiuscula, 1 minuscula e 1 digito; embaralha
+// com randomInt (sem vies). 12+ chars => acima do minimo do cadastro.
+export function genTempPassword(len = 12) {
+  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789"];
+  const all = sets.join("");
+  const chars = sets.map((s) => s[randomInt(s.length)]);          // 1 de cada classe
+  while (chars.length < Math.max(len, 8)) chars.push(all[randomInt(all.length)]);
+  for (let i = chars.length - 1; i > 0; i--) {                    // Fisher-Yates
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}

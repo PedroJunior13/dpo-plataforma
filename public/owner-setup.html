@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Recuperar acesso do dono — DPO PJ Protection</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card card">
+    <div class="center" style="margin-bottom:18px">
+      <div class="brand" style="font-size:22px">DPO PJ <span class="g">Protection</span></div>
+      <p class="muted small" style="margin-top:6px">Recuperação de acesso do <strong>dono</strong> (administrador da plataforma).</p>
+    </div>
+
+    <!-- Aviso: recuperação desativada -->
+    <div id="disabled" class="hide">
+      <div class="note danger" style="border:1px solid #ff9aa8;border-radius:10px;padding:12px;color:#ffd5dc;background:rgba(255,90,110,.08)">
+        <strong>Recuperação desativada.</strong>
+        <p class="small" style="margin:8px 0 0">
+          Para habilitar, defina a variável de ambiente <code>BOOTSTRAP_TOKEN</code> no Netlify
+          (Site settings → Environment variables) com um valor secreto e forte, depois recarregue esta página.
+          Opcionalmente defina <code>OWNER_EMAIL</code> com o seu e-mail de dono.
+        </p>
+      </div>
+    </div>
+
+    <!-- Formulário de definição de senha -->
+    <div id="form">
+      <p class="small muted" style="margin:0 0 12px">
+        Use o <strong>token de recuperação</strong> (variável <code>BOOTSTRAP_TOKEN</code> configurada no Netlify)
+        para definir uma nova senha do dono. Em seguida, faça login normalmente e ative o 2FA na aba Conta.
+      </p>
+      <div class="field"><label>Token de recuperação</label><input id="token" type="password" autocomplete="off" placeholder="BOOTSTRAP_TOKEN configurado no Netlify"></div>
+      <div class="field"><label>Nova senha (10+ caracteres)</label><input id="password" type="password" autocomplete="new-password" placeholder="Crie uma senha forte"></div>
+      <div class="field"><label>Confirmar nova senha</label><input id="password2" type="password" autocomplete="new-password" placeholder="Repita a senha"></div>
+      <button class="btn gold block" id="btnSet">Definir senha do dono</button>
+    </div>
+
+    <!-- Sucesso -->
+    <div id="done" class="hide center">
+      <div class="note ok" style="border:1px solid #7bdca0;border-radius:10px;padding:14px;color:#d7ffe7;background:rgba(80,220,140,.08)">
+        <strong>Senha do dono definida.</strong>
+        <p class="small" id="doneMsg" style="margin:8px 0 0"></p>
+      </div>
+      <a class="btn gold block" href="/" style="margin-top:14px">Ir para o login</a>
+    </div>
+
+    <p id="err" class="small center hide" style="color:#ff9aa8;margin-top:12px"></p>
+
+    <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
+    <p class="small center muted">
+      Já tem acesso? <a href="/">Voltar ao login</a>
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  function showErr(m) { const e = $("#err"); e.textContent = m; e.classList.remove("hide"); }
+  function clearErr() { $("#err").classList.add("hide"); }
+
+  // Verifica se a recuperação está habilitada (sem revelar o segredo).
+  (async function checkStatus() {
+    try {
+      const res = await fetch("/api/auth/bootstrap-status");
+      const data = await res.json().catch(() => ({}));
+      if (data && data.available === false) {
+        $("#form").classList.add("hide");
+        $("#disabled").classList.remove("hide");
+      }
+    } catch { /* offline: deixa o formulário visível e deixa o POST reportar */ }
+  })();
+
+  async function setOwnerPassword() {
+    clearErr();
+    const token = $("#token").value.trim();
+    const password = $("#password").value;
+    const password2 = $("#password2").value;
+    if (!token) return showErr("Informe o token de recuperação (BOOTSTRAP_TOKEN).");
+    if (password.length < 10) return showErr("A senha precisa ter 10+ caracteres.");
+    if (password !== password2) return showErr("As senhas não conferem.");
+
+    const btn = $("#btnSet"); btn.disabled = true; btn.textContent = "Definindo…";
+    try {
+      const res = await fetch("/api/auth/bootstrap-owner", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        if (data.code === "BOOTSTRAP_DISABLED") {
+          $("#form").classList.add("hide");
+          $("#disabled").classList.remove("hide");
+          return;
+        }
+        throw new Error(data.error || "Não foi possível definir a senha.");
+      }
+      $("#form").classList.add("hide");
+      $("#doneMsg").textContent = (data.message || "Faça login em / e ative o 2FA na aba Conta.") +
+        (data.email ? " (e-mail: " + data.email + ")" : "");
+      $("#done").classList.remove("hide");
+    } catch (e) { showErr(e.message); }
+    finally { btn.disabled = false; btn.textContent = "Definir senha do dono"; }
+  }
+
+  $("#btnSet").addEventListener("click", setOwnerPassword);
+  ["token", "password", "password2"].forEach((id) =>
+    $("#" + id).addEventListener("keydown", (e) => { if (e.key === "Enter") setOwnerPassword(); }));
+})();
+</script>
+</body>
+</html>
