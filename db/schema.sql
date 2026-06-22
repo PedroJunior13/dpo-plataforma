@@ -447,8 +447,15 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
   author_email TEXT,
   author_name  TEXT,
   body         TEXT,
+  attachment_name TEXT,                  -- anexo por mensagem (resposta com arquivo)
+  attachment_type TEXT,
+  attachment_data TEXT,                  -- base64 (cap 2 MB no app/painel)
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Bancos ja existentes: garante as colunas de anexo por mensagem (idempotente).
+ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_data TEXT;
 CREATE INDEX IF NOT EXISTS idx_support_ticket_msgs_ticket ON support_ticket_messages(ticket_id);
 
 -- ===========================================================================

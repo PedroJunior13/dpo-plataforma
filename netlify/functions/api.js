@@ -540,8 +540,8 @@ async function ownerRoutes(req, user, seg, method) {
     const message = L.invitationMessage(lic, plan, { name: lic.tenant_name });
     const b = await readJson(req).catch(() => ({}));
     if (b?.email && lic.tenant_email) {
-      await sendEmail({ tenantId: lic.tenant_id, to: lic.tenant_email, subject: "Seu acesso — DPO PJ Protection",
-        html: `<pre style="font-family:inherit">${message}</pre>`, type: "license_sent" });
+      await safe(sendEmail({ tenantId: lic.tenant_id, to: lic.tenant_email, subject: "Seu acesso — DPO PJ Protection",
+        html: `<pre style="font-family:inherit">${message}</pre>`, type: "license_sent" }), null);
     }
     return ok({ link, message, whatsapp: lic.tenant_phone ? waLink(lic.tenant_phone, message) : null });
   }
@@ -977,6 +977,11 @@ function sanitizeAttachment(att) {
   if (data.length > 2_700_000) throw httpError("Anexo muito grande (limite 2 MB).", 413);
   return { name: String(att.name).slice(0, 180), type: String(att.type || "application/octet-stream").slice(0, 120), data };
 }
+// Remove o base64 pesado da mensagem e expoe so a flag de existencia do anexo.
+// Usado para devolver a conversa sem trafegar arquivos (download e sob demanda).
+function stripMsgAttachment(m) {
+  return { ...m, attachment_data: undefined, has_attachment: !!m.attachment_name };
+}
 function httpError(msg, status) { const e = new Error(msg); e.httpStatus = status; return e; }
 // Escape para conteudo em HTML de e-mail (evita injecao no corpo da mensagem).
 function escapeHtml(s) {
@@ -1042,40 +1047,54 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
-    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages });
+    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages: messages.map(stripMsgAttachment) });
   }
 
-  // ---- DOWNLOAD do anexo (base64) ----
+  // ---- DOWNLOAD do anexo do CHAMADO (base64) ----
   if (head === "tickets" && sseg[1] && sseg[2] === "attachment" && method === "GET") {
     const t = await one(sql`SELECT attachment_name, attachment_type, attachment_data FROM support_tickets WHERE id=${sseg[1]}`);
     if (!t || !t.attachment_data) return fail("Sem anexo.", 404);
     return ok({ name: t.attachment_name, type: t.attachment_type, data: t.attachment_data });
   }
 
-  // ---- RESPONDER ao cliente (registra mensagem + e-mail) ----
+  // ---- DOWNLOAD do anexo de uma MENSAGEM da conversa (base64) ----
+  if (head === "tickets" && sseg[1] && sseg[2] === "messages" && sseg[3] && sseg[4] === "attachment" && method === "GET") {
+    const mid = parseInt(sseg[3], 10);
+    if (!Number.isFinite(mid)) return fail("Mensagem invalida.", 400);
+    const m = await one(sql`SELECT attachment_name, attachment_type, attachment_data
+      FROM support_ticket_messages WHERE id=${mid} AND ticket_id=${sseg[1]}`);
+    if (!m || !m.attachment_data) return fail("Sem anexo.", 404);
+    return ok({ name: m.attachment_name, type: m.attachment_type, data: m.attachment_data });
+  }
+
+  // ---- RESPONDER ao cliente (registra mensagem + anexo opcional + e-mail) ----
   if (head === "tickets" && sseg[1] && sseg[2] === "reply" && method === "POST") {
     const b = await readJson(req);
     if (!b.body || !String(b.body).trim()) return fail("Escreva a resposta.");
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const newStatus = TICKET_STATUSES.includes(b.status) ? b.status : "aguardando_cliente";
-    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
-      VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)})`;
+    const att = sanitizeAttachment(b.attachment);
+    await sql`INSERT INTO support_ticket_messages
+      (ticket_id, author_role, author_email, author_name, body, attachment_name, attachment_type, attachment_data)
+      VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)},
+        ${att?.name || null}, ${att?.type || null}, ${att?.data || null})`;
     await sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
       first_response_at=coalesce(first_response_at, now()),
       resolved_at=${newStatus === "resolvido" || newStatus === "fechado" ? new Date().toISOString() : null}
       WHERE id=${t.id}`;
     await audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
-      entity: "support_ticket", entityId: t.id, detail: { status: newStatus } });
+      entity: "support_ticket", entityId: t.id, detail: { status: newStatus, attachment: att?.name || null } });
     if (t.opener_email) {
-      await sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
+      await safe(sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
         subject: `[Chamado #${t.ticket_no}] Resposta do suporte — ${t.subject}`,
         type: "support",
         html: `<p>Olá ${escapeHtml(t.opener_name || "")},</p>
           <p>Há uma nova resposta no seu chamado <b>#${t.ticket_no}</b> (${escapeHtml(t.subject)}):</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
+          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (acesse a plataforma para baixar)</p>` : ""}
           <p>Acesse a plataforma, menu <b>Suporte</b>, para acompanhar e responder.</p>
-          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` });
+          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }), null);
     }
     return ok({ ok: true, status: newStatus });
   }
@@ -1138,10 +1157,12 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
       VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${description})`;
     await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
       entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority } });
-    // Notifica o suporte (dono).
+    // Notifica o suporte (dono). O envio do e-mail e BEST-EFFORT: usamos safe()
+    // para que uma falha/lentidao do provedor (Resend) jamais derrube a abertura
+    // do chamado — o protocolo ja foi gravado e deve ser sempre devolvido.
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await sendEmail({ tenantId: tenant.id, to: inbox,
+      await safe(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] ${ticketCategoryLabel(category)} — ${subject}`,
         type: "support",
         html: `<p><b>Novo chamado #${t.ticket_no}</b> (${escapeHtml(ticketCategoryLabel(category))}, prioridade ${escapeHtml(priority)})</p>
@@ -1150,9 +1171,29 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
           <p><b>Assunto:</b> ${escapeHtml(subject)}</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(description).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)}</p>` : ""}
-          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` });
+          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` }), null);
     }
     return ok({ ticketNo: t.ticket_no, id: t.id, status: t.status });
+  }
+
+  // Download do anexo do CHAMADO (base64) — so do proprio tenant.
+  if (head && sseg[1] === "attachment" && method === "GET") {
+    const t = await one(sql`SELECT attachment_name, attachment_type, attachment_data
+      FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
+    if (!t || !t.attachment_data) return fail("Sem anexo.", 404);
+    return ok({ name: t.attachment_name, type: t.attachment_type, data: t.attachment_data });
+  }
+
+  // Download do anexo de uma MENSAGEM da conversa (base64) — so do proprio tenant.
+  if (head && sseg[1] === "messages" && sseg[2] && sseg[3] === "attachment" && method === "GET") {
+    const mid = parseInt(sseg[2], 10);
+    if (!Number.isFinite(mid)) return fail("Mensagem invalida.", 400);
+    // Garante que a mensagem pertence a um chamado do proprio tenant (join de seguranca).
+    const m = await one(sql`SELECT m.attachment_name, m.attachment_type, m.attachment_data
+      FROM support_ticket_messages m JOIN support_tickets t ON t.id=m.ticket_id
+      WHERE m.id=${mid} AND m.ticket_id=${head} AND t.tenant_id=${tenant.id}`);
+    if (!m || !m.attachment_data) return fail("Sem anexo.", 404);
+    return ok({ name: m.attachment_name, type: m.attachment_type, data: m.attachment_data });
   }
 
   // Detalhe + conversa de um chamado do proprio tenant.
@@ -1160,28 +1201,32 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
-    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages });
+    return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages: messages.map(stripMsgAttachment) });
   }
 
-  // Cliente responde no proprio chamado.
+  // Cliente responde no proprio chamado (com anexo opcional).
   if (head && sseg[1] === "reply" && method === "POST") {
     const b = await readJson(req);
     if (!b.body || !String(b.body).trim()) return fail("Escreva sua mensagem.");
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
-    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
-      VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)})`;
+    const att = sanitizeAttachment(b.attachment);
+    await sql`INSERT INTO support_ticket_messages
+      (ticket_id, author_role, author_email, author_name, body, attachment_name, attachment_type, attachment_data)
+      VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)},
+        ${att?.name || null}, ${att?.type || null}, ${att?.data || null})`;
     const newStatus = t.status === "resolvido" || t.status === "fechado" ? "aberto" : t.status;
     await sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`;
     await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
-      entity: "support_ticket", entityId: t.id });
+      entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } });
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await sendEmail({ tenantId: tenant.id, to: inbox,
+      await safe(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] Resposta do cliente — ${t.subject}`,
         type: "support",
         html: `<p>O cliente respondeu no chamado <b>#${t.ticket_no}</b>:</p>
-          <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>` });
+          <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
+          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }), null);
     }
     return ok({ ok: true });
   }

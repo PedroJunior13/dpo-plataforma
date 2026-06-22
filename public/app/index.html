@@ -987,7 +987,7 @@ tbody tr:hover{background:var(--surface-2);}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.62.0";
+const APP_VERSION = "v3.63.2";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2790,6 +2790,18 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.63.2", date:"22/06/2026", tag:"Suporte com conversa completa: ao responder um chamado agora dá para escrever a mensagem, anexar um arquivo (até 2 MB) e baixar os anexos enviados — nos dois sentidos, você e o suporte. O dono responde com mudança de status, descrição e anexo", tagColor:"good", items:[
+    {type:"add", txt:"💬 <strong>Conversa com anexos no suporte</strong>: cada resposta do chamado pode levar um <strong>anexo próprio</strong> (imagem, PDF, documento, planilha ou texto, até <strong>2 MB</strong>), além do texto. Os anexos enviados por você e pelo suporte aparecem com botão <strong>📎 Baixar</strong> direto na conversa. Vale para o <strong>assinante</strong> e para o <strong>suporte (Painel do dono)</strong> — fluxo completo de ida e volta"},
+    {type:"upd", txt:"📎 <strong>Anexo na resposta</strong>: novo campo de anexo no formulário de resposta do chamado, com o mesmo limite de 2 MB do envio inicial"},
+  ]},
+  { v:"v3.63.1", date:"22/06/2026", tag:"Suporte da consultoria corrigido: abrir e responder chamados volta a funcionar normalmente, sem erro de comunicação (HTTP 502). O envio do e-mail de aviso passou a ser à prova de falhas e nunca mais impede a abertura do chamado", tagColor:"good", items:[
+    {type:"fix", txt:"🛟 <strong>Erro ao abrir chamado de suporte corrigido</strong>: abrir ou responder um chamado podia falhar com <strong>“Falha na comunicação com o suporte (HTTP 502)”</strong>. A causa era o <strong>envio do e-mail de aviso</strong> ao suporte: quando o provedor de e-mail demorava ou estava indisponível, a chamada ficava <strong>pendurada até o limite do servidor</strong> e derrubava a operação. Agora o chamado é <strong>gravado e o protocolo devolvido imediatamente</strong>, e o e-mail é enviado em segundo plano de forma tolerante a falhas (com tempo-limite). Vale para <strong>todas as licenças atuais e futuras</strong>"},
+  ]},
+  { v:"v3.63.0", date:"22/06/2026", tag:"Sessão expira por inatividade (desktop e mobile): após muito tempo parado, o ambiente é bloqueado e pede login novamente. Na área de consultoria, novo botão “Estágio anterior” ao lado de “Voltar ao Painel”. Índice do tutorial do Painel corrigido (rola exatamente para a seção)", tagColor:"good", items:[
+    {type:"sec", txt:"🔒 <strong>Trava por inatividade</strong>: depois de <strong>20 minutos parado</strong> (sem mouse, teclado, toque ou rolagem), o ambiente é <strong>bloqueado</strong> e a sessão encerrada — aparece o aviso <strong>“Sessão encerrada por inatividade”</strong> com o botão <strong>Entrar novamente</strong>. Vale para <strong>desktop e celular</strong> e tanto para o assinante quanto para o dono. A <strong>demonstração</strong> não expira por inatividade"},
+    {type:"add", txt:"↩ <strong>Botão “Estágio anterior” na consultoria</strong>: ao operar o ambiente como dono, além de <strong>← Voltar ao Painel</strong> há agora o botão <strong>↩ Estágio anterior</strong>, que volta um passo na navegação do ambiente (mesma ação da seta ← do topo)"},
+    {type:"fix", txt:"🧭 <strong>Índice do tutorial corrigido</strong>: clicar em um item do sumário do tutorial do Painel agora <strong>rola exatamente até a seção</strong> (não fica mais escondido atrás da barra fixa). Texto do tutorial mais legível e melhor alinhado"},
+  ]},
   { v:"v3.62.0", date:"22/06/2026", tag:"Demonstração com trava de 7 dias validada de ponta a ponta: link oficial expirado não abre mais o ambiente. Painel do dono ganhou blocos clicáveis (CRM e Suporte) com explicação, configuração de NFS-e pela aba Integrações e cobrança recorrente exclusiva do cartão", tagColor:"good", items:[
     {type:"sec", txt:"⏳ <strong>Demonstração trava após 7 dias</strong>: o link oficial de demonstração (gerado no Painel) tem validade de <strong>7 dias validada no servidor</strong>. Ao expirar, o ambiente <strong>não abre mais</strong> — aparece a tela <strong>“Demonstração expirada”</strong> com opção de contratar. Mesmo quem já entrou é <strong>travado</strong> assim que a data passa (o limite também é checado dentro do ambiente)"},
     {type:"add", txt:"🅸 <strong>Blocos clicáveis no painel do dono</strong>: os <strong>4 indicadores do CRM</strong> e os <strong>5 indicadores do Suporte</strong> agora têm o selo <strong>ⓘ</strong> — clicar abre uma janela explicando o que cada número significa e como é calculado"},
@@ -5421,10 +5433,12 @@ async function supOpenTicket(id){
   const t=d.ticket||{}; const msgs=Array.isArray(d.messages)?d.messages:[];
   const thread=msgs.map(m=>{
     const mine=m.author_role==="cliente";
+    const attBtn=m.has_attachment?`<div style="margin-top:7px"><button class="btn sm ghost" data-matt="${esc(m.id)}">📎 Baixar anexo (${esc(m.attachment_name||"arquivo")})</button></div>`:"";
     return `<div style="display:flex;${mine?"justify-content:flex-end":""};margin:8px 0">
       <div style="max-width:78%;background:${mine?"#eef5ff":"#f6f7f9"};border:1px solid ${mine?"#cfe0ff":"#e6e8ec"};border-radius:12px;padding:10px 12px">
         <div class="muted" style="font-size:11px;margin-bottom:3px">${mine?"Você":"Suporte DPO PJ"} · ${esc(m.author_name||m.author_email||"")} · ${esc(supDateTime(m.created_at))}</div>
         <div style="white-space:pre-wrap;line-height:1.5">${esc(m.body||"")}</div>
+        ${attBtn}
       </div></div>`;
   }).join("");
   const closed=t.status==="fechado";
@@ -5436,23 +5450,33 @@ async function supOpenTicket(id){
           <div class="muted" style="font-size:12px;margin-top:4px">${esc(supCatLabel(t.category))} · aberto em ${esc(supDateTime(t.created_at))}</div></div>
         <div style="text-align:right">${supStatusBadge(t.status)} ${supPrioBadge(t.priority)}</div>
       </div>
-      ${t.has_attachment?`<div class="info-box" style="margin-top:10px">📎 Anexo enviado: <strong>${esc(t.attachment_name||"arquivo")}</strong></div>`:""}
+      ${t.has_attachment?`<div class="info-box" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span>📎 Anexo enviado: <strong>${esc(t.attachment_name||"arquivo")}</strong></span><button class="btn sm ghost" id="sup-tatt">Baixar</button></div>`:""}
     </div>
     <div class="card">
       <h4 style="margin-top:0">Conversa</h4>
       <div id="sup-thread" style="max-height:420px;overflow:auto;padding:2px">${thread||'<p class="muted">Sem mensagens.</p>'}</div>
       ${closed?`<div class="info-box" style="margin-top:12px">Este chamado está <strong>fechado</strong>. Abra um novo chamado se precisar de mais ajuda.</div>`:`
       <div class="field" style="margin-top:12px"><label>Responder</label><textarea id="sup-reply" rows="3" placeholder="Escreva sua resposta…"></textarea></div>
+      <div class="field"><label>Anexo (opcional · até 2 MB)</label><input type="file" id="sup-reply-file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.log"></div>
       <button class="btn" id="sup-reply-send">Enviar resposta</button>`}
     </div>`;
   el("sup-back").onclick=()=>go("suporte");
   const th=el("sup-thread"); if(th)th.scrollTop=th.scrollHeight;
+  // Baixar anexo (data-URL) — helper compartilhado p/ chamado e mensagens.
+  const supDownload=(a)=>{ const link=document.createElement("a"); link.href="data:"+(a.type||"application/octet-stream")+";base64,"+a.data; link.download=a.name||"anexo"; document.body.appendChild(link); link.click(); link.remove(); };
+  const tatt=el("sup-tatt");
+  if(tatt)tatt.onclick=async()=>{ try{ supDownload(await supApi("/"+encodeURIComponent(id)+"/attachment")); }catch(e){ toast(e.message||"Não foi possível baixar.",true); } };
+  el("content").querySelectorAll("[data-matt]").forEach(b=>{ b.onclick=async()=>{ try{ supDownload(await supApi("/"+encodeURIComponent(id)+"/messages/"+encodeURIComponent(b.getAttribute("data-matt"))+"/attachment")); }catch(e){ toast(e.message||"Não foi possível baixar.",true); } }; });
   const rs=el("sup-reply-send");
   if(rs)rs.onclick=async()=>{
     const body=(el("sup-reply").value||"").trim();
     if(!body)return toast("Escreva sua mensagem.",true);
     rs.disabled=true; const old=rs.textContent; rs.textContent="Enviando…";
-    try{ await supApi("/"+encodeURIComponent(id)+"/reply",{method:"POST",body:JSON.stringify({body})});
+    try{
+      let attachment=null; const fEl=el("sup-reply-file"); const f=fEl&&fEl.files&&fEl.files[0];
+      if(f){ if(f.size>2*1024*1024){ rs.disabled=false; rs.textContent=old; return toast("Anexo acima de 2 MB. Escolha um arquivo menor.",true); }
+        attachment={name:f.name,type:f.type||"application/octet-stream",data:await supFileToB64(f)}; }
+      await supApi("/"+encodeURIComponent(id)+"/reply",{method:"POST",body:JSON.stringify({body,attachment})});
       toast("Resposta enviada."); supOpenTicket(id);
     }catch(e){ rs.disabled=false; rs.textContent=old; toast(e.message||"Não foi possível enviar.",true); }
   };
@@ -8933,20 +8957,74 @@ function showDemoExpired(){
    NAO veem este botao — so aparece quando a sessao SaaS e do dono (role OWNER).
    Sincrono e autossuficiente: nao depende do bootstrap e nao e apagado pelos
    re-renders do SPA (fixo, anexado ao body). */
-(function ownerBackToPanel(){
+(function ownerNavButtons(){
   try{
     var params=new URLSearchParams(location.search);
     if((params.get("support")||"").trim()) return; // modo suporte ja tem saida propria
     var s=null; try{ s=JSON.parse(localStorage.getItem("dpo_user")||"null"); }catch(_){}
     if(!s || s.role!=="OWNER") return;
-    if(document.getElementById("saas-owner-back")) return;
-    var a=document.createElement("a");
-    a.id="saas-owner-back"; a.href="/painel"; a.title="Voltar ao Painel de gestao";
-    a.setAttribute("style","position:fixed;right:18px;top:14px;z-index:10000;display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#0c2c52,#143e74);color:#fff;border:1px solid rgba(212,160,23,.55);border-radius:999px;padding:9px 16px;font-size:13px;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(2,6,23,.38);font-family:inherit;line-height:1");
+    if(document.getElementById("saas-owner-nav")) return;
+    // Container fixo (canto superior direito) com DOIS botoes: voltar ao estagio
+    // anterior (navegacao interna do ambiente) e voltar ao Painel de gestao.
+    // flex-wrap garante boa exibicao tambem no mobile.
+    var box=document.createElement("div");
+    box.id="saas-owner-nav";
+    box.setAttribute("style","position:fixed;right:14px;top:12px;z-index:10000;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:calc(100vw - 28px);font-family:inherit");
+    var common="display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 14px;font-size:12.5px;font-weight:700;text-decoration:none;box-shadow:0 6px 18px rgba(2,6,23,.32);line-height:1;cursor:pointer;border:1px solid";
+    // 1) Estagio anterior (goBack do SPA)
+    var back=document.createElement("button"); back.type="button"; back.id="saas-owner-step-back";
+    back.title="Voltar ao estagio anterior";
+    back.setAttribute("style",common+" rgba(212,160,23,.55);background:linear-gradient(135deg,#cf9b01,#e9c46a);color:#1a1205");
+    back.innerHTML="↩ Estágio anterior";
+    back.onclick=function(){ try{ goBack(); }catch(e){} };
+    back.onmouseover=function(){ back.style.filter="brightness(1.07)"; };
+    back.onmouseout=function(){ back.style.filter=""; };
+    // 2) Voltar ao Painel
+    var a=document.createElement("a"); a.id="saas-owner-back"; a.href="/painel"; a.title="Voltar ao Painel de gestao";
+    a.setAttribute("style",common+" rgba(212,160,23,.55);background:linear-gradient(135deg,#0c2c52,#143e74);color:#fff");
     a.innerHTML="← Voltar ao Painel";
     a.onmouseover=function(){ a.style.filter="brightness(1.12)"; };
     a.onmouseout=function(){ a.style.filter=""; };
-    document.body.appendChild(a);
+    box.appendChild(back); box.appendChild(a);
+    document.body.appendChild(box);
+  }catch(e){}
+})();
+
+/* ===== Trava por inatividade — exige novo login (desktop + mobile) =====
+   Apos um periodo parado (sem mouse/teclado/toque/rolagem), encerra a sessao e
+   bloqueia a pagina com um aviso pedindo login novamente. Usa comparacao de
+   timestamp (robusto a suspensao do aparelho). Demonstracao publica nao expira. */
+(function idleGuard(){
+  try{
+    var params=new URLSearchParams(location.search);
+    var isDemo=params.get("demo")==="1" || !!localStorage.getItem("dpo_demo_token");
+    if(isDemo) return; // sandbox de demonstracao nao trava por inatividade
+    var isSupport=!!(params.get("support")||"").trim();
+    var IDLE_MS=20*60*1000;            // 20 minutos parado
+    var last=Date.now(), fired=false;
+    function bump(){ last=Date.now(); }
+    ["mousemove","mousedown","keydown","scroll","touchstart","click","wheel"].forEach(function(ev){
+      window.addEventListener(ev,bump,{passive:true});
+    });
+    function expire(){
+      if(fired) return; fired=true;
+      try{
+        sessionStorage.removeItem("token"); sessionStorage.removeItem("user");
+        if(!isSupport){ localStorage.removeItem("dpo_token"); localStorage.removeItem("dpo_user"); localStorage.removeItem("dpo_saas"); }
+      }catch(_){}
+      var dest=isSupport?"/painel":"/";
+      var ov=document.createElement("div"); ov.id="idle-lock";
+      ov.setAttribute("style","position:fixed;inset:0;z-index:100000;background:rgba(4,8,16,.92);display:flex;align-items:center;justify-content:center;padding:18px;font-family:inherit");
+      ov.innerHTML='<div style="max-width:430px;text-align:center;background:#fff;border:1px solid rgba(207,155,1,.4);border-radius:16px;padding:30px 26px;box-shadow:0 18px 50px rgba(2,6,23,.5)">'
+        +'<div style="font-size:42px;line-height:1">🔒</div>'
+        +'<h2 style="margin:10px 0 6px;color:#0c2c52;font-size:20px">Sessão encerrada por inatividade</h2>'
+        +'<p style="margin:0 0 18px;color:#5a6b85;font-size:14px;line-height:1.6">Por segurança, você ficou muito tempo parado. Faça login novamente para continuar.</p>'
+        +'<a href="'+dest+'" style="display:inline-block;background:linear-gradient(135deg,#cf9b01,#e9c46a);color:#1a1205;font-weight:800;border-radius:10px;padding:11px 24px;text-decoration:none;font-size:14px">Entrar novamente</a>'
+        +'</div>';
+      document.body.appendChild(ov);
+    }
+    setInterval(function(){ if(Date.now()-last>IDLE_MS) expire(); },30000);
+    document.addEventListener("visibilitychange",function(){ if(!document.hidden && Date.now()-last>IDLE_MS) expire(); });
   }catch(e){}
 })();
 handleHash();

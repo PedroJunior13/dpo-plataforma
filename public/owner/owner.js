@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.7.0";
+  const PLATFORM_VERSION = "2.8.2";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -21,6 +21,13 @@
   const dt = (s) => s ? new Date(s).toLocaleDateString("pt-BR") : "—";
   const dtt = (s) => s ? new Date(s).toLocaleString("pt-BR") : "—";
   const digits = (s) => String(s || "").replace(/\D/g, "");
+  // Le um arquivo e devolve so o base64 (sem o prefixo data:...;base64,).
+  const fileToB64 = (file) => new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => { try { const s = String(rd.result || ""); const i = s.indexOf(","); res(i >= 0 ? s.slice(i + 1) : s); } catch (e) { rej(e); } };
+    rd.onerror = () => rej(new Error("Falha ao ler o arquivo selecionado."));
+    rd.readAsDataURL(file);
+  });
 
   let TOAST_T;
   function toast(msg) {
@@ -925,10 +932,14 @@
     const sla = supSla(t);
     const thread = msgs.map((m) => {
       const sup = m.author_role === "suporte";
+      const attBtn = m.has_attachment
+        ? `<div style="margin-top:7px"><button class="btn sm ghost" data-matt="${esc(m.id)}">📎 Baixar anexo (${esc(m.attachment_name || "arquivo")})</button></div>`
+        : "";
       return `<div style="display:flex;${sup ? "justify-content:flex-end" : ""};margin:8px 0">
         <div style="max-width:80%;background:${sup ? "rgba(212,160,23,.12)" : "rgba(255,255,255,.04)"};border:1px solid ${sup ? "rgba(212,160,23,.35)" : "rgba(255,255,255,.10)"};border-radius:12px;padding:10px 12px">
           <div class="small muted" style="margin-bottom:3px">${sup ? "Suporte" : "Cliente"} · ${esc(m.author_name || m.author_email || "")} · ${dtt(m.created_at)}</div>
           <div style="white-space:pre-wrap;line-height:1.5">${esc(m.body || "")}</div>
+          ${attBtn}
         </div></div>`;
     }).join("");
     const stOpts = Object.keys(SUP_ST).map((k) => `<option value="${k}"${t.status === k ? " selected" : ""}>${esc(SUP_ST[k])}</option>`).join("");
@@ -950,6 +961,7 @@
       <div id="tk_thread" style="max-height:300px;overflow:auto;padding:2px;background:rgba(0,0,0,.12);border-radius:10px">${thread || '<p class="muted" style="padding:10px">Sem mensagens.</p>'}</div>
       <h3 style="margin:14px 0 4px">Responder ao cliente</h3>
       <textarea id="tk_reply" rows="4" placeholder="Escreva a resposta enviada ao solicitante (vai por e-mail e fica no histórico)…"></textarea>
+      <div class="field" style="margin-top:8px"><label>Anexo (opcional · até 2 MB)</label><input type="file" id="tk_file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.log"></div>
       <div class="row c2" style="gap:10px;margin-top:8px">
         <div class="field"><label>Status após resposta</label><select id="tk_repst">${Object.keys(SUP_ST).map((k) => `<option value="${k}"${k === "aguardando_cliente" ? " selected" : ""}>${esc(SUP_ST[k])}</option>`).join("")}</select></div>
         <div class="field" style="display:flex;align-items:flex-end"><button class="btn gold block" id="tk_send">Enviar resposta</button></div>
@@ -961,21 +973,36 @@
       </div>
       <button class="btn ghost sm" id="tk_save" style="margin-top:6px">Salvar status/prioridade</button>`;
     const th = $("#tk_thread"); if (th) th.scrollTop = th.scrollHeight;
+    // Baixar anexo via data-URL (helper compartilhado p/ chamado e mensagens).
+    const dlAttachment = async (a) => {
+      const link = document.createElement("a");
+      link.href = "data:" + (a.type || "application/octet-stream") + ";base64," + a.data;
+      link.download = a.name || "anexo"; document.body.appendChild(link); link.click(); link.remove();
+    };
     const att = $("#tk_att");
     if (att) att.onclick = async () => {
-      try {
-        const a = await api("/owner/support/tickets/" + encodeURIComponent(id) + "/attachment");
-        const link = document.createElement("a");
-        link.href = "data:" + (a.type || "application/octet-stream") + ";base64," + a.data;
-        link.download = a.name || "anexo"; document.body.appendChild(link); link.click(); link.remove();
-      } catch (e) { toast(e.message); }
+      try { await dlAttachment(await api("/owner/support/tickets/" + encodeURIComponent(id) + "/attachment")); }
+      catch (e) { toast(e.message); }
     };
+    // Anexos individuais de cada mensagem da conversa.
+    ($("#tk_thread") || document).querySelectorAll("[data-matt]").forEach((b) => {
+      b.onclick = async () => {
+        try { await dlAttachment(await api("/owner/support/tickets/" + encodeURIComponent(id) + "/messages/" + encodeURIComponent(b.getAttribute("data-matt")) + "/attachment")); }
+        catch (e) { toast(e.message); }
+      };
+    });
     $("#tk_send").onclick = async () => {
       const body = ($("#tk_reply").value || "").trim();
       if (!body) return toast("Escreva a resposta.");
       const btn = $("#tk_send"); btn.disabled = true;
       try {
-        await api("/owner/support/tickets/" + encodeURIComponent(id) + "/reply", { method: "POST", body: JSON.stringify({ body, status: $("#tk_repst").value }) });
+        let attachment = null;
+        const fEl = $("#tk_file"); const f = fEl && fEl.files && fEl.files[0];
+        if (f) {
+          if (f.size > 2 * 1024 * 1024) { btn.disabled = false; return toast("Anexo acima de 2 MB. Escolha um arquivo menor."); }
+          attachment = { name: f.name, type: f.type || "application/octet-stream", data: await fileToB64(f) };
+        }
+        await api("/owner/support/tickets/" + encodeURIComponent(id) + "/reply", { method: "POST", body: JSON.stringify({ body, status: $("#tk_repst").value, attachment }) });
         toast("Resposta enviada ao cliente."); openTicket(id); loadSupport();
       } catch (e) { btn.disabled = false; toast(e.message); }
     };
@@ -1135,4 +1162,31 @@
   supPoll();
   setInterval(() => { if (!document.hidden) supPoll(); }, 60000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) supPoll(); });
+
+  // ---------- trava por inatividade (re-login) — desktop + mobile ----------
+  // Apos um periodo parado, encerra a sessao do dono e bloqueia a tela pedindo
+  // novo login. Comparacao por timestamp (robusto a suspensao do aparelho).
+  (function idleGuard() {
+    const IDLE_MS = 20 * 60 * 1000; // 20 minutos parado
+    let last = Date.now(), fired = false;
+    const bump = () => { last = Date.now(); };
+    ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click", "wheel"]
+      .forEach((ev) => window.addEventListener(ev, bump, { passive: true }));
+    function expire() {
+      if (fired) return; fired = true;
+      try { localStorage.removeItem("dpo_token"); localStorage.removeItem("dpo_user"); } catch (_) {}
+      const ov = document.createElement("div");
+      ov.id = "idle-lock";
+      ov.setAttribute("style", "position:fixed;inset:0;z-index:100000;background:rgba(4,8,16,.92);display:flex;align-items:center;justify-content:center;padding:18px");
+      ov.innerHTML = '<div style="max-width:430px;text-align:center;background:#0c1c34;border:1px solid rgba(217,164,65,.4);border-radius:16px;padding:30px 26px;font-family:inherit">'
+        + '<div style="font-size:42px;line-height:1">🔒</div>'
+        + '<h2 style="margin:10px 0 6px;color:#fff;font-size:20px">Sessão encerrada por inatividade</h2>'
+        + '<p style="margin:0 0 18px;color:#9fb2cc;font-size:14px;line-height:1.6">Por segurança, você ficou muito tempo parado. Faça login novamente para continuar.</p>'
+        + '<a href="/?next=/painel" style="display:inline-block;background:linear-gradient(135deg,#d9a441,#e9c46a);color:#1a1205;font-weight:800;border-radius:10px;padding:11px 24px;text-decoration:none;font-size:14px">Entrar novamente</a>'
+        + '</div>';
+      document.body.appendChild(ov);
+    }
+    setInterval(() => { if (Date.now() - last > IDLE_MS) expire(); }, 30000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - last > IDLE_MS) expire(); });
+  })();
 })();
