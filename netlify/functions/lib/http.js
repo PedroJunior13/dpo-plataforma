@@ -37,6 +37,41 @@ export function clientIp(req) {
     || "").slice(0, 64);
 }
 
+// User-Agent do cliente (navegador/dispositivo), util para a trilha de auditoria.
+export function userAgent(req) {
+  return (req.headers.get("user-agent") || "").slice(0, 256);
+}
+
+// Geolocalizacao aproximada do cliente. O Netlify injeta o header `x-nf-geo`
+// (JSON em base64) com cidade/regiao/pais/coordenadas. Tudo best-effort:
+// se nao houver header, cai para os headers simples de pais.
+export function clientGeo(req) {
+  const h = req.headers;
+  try {
+    const raw = h.get("x-nf-geo");
+    if (raw) {
+      const j = JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
+      return {
+        city: j.city || null,
+        region: j.subdivision?.name || j.subdivision?.code || null,
+        country: j.country?.code || j.country?.name || null,
+        countryName: j.country?.name || null,
+        lat: j.latitude ?? null,
+        lon: j.longitude ?? null,
+        tz: j.timezone || null,
+      };
+    }
+  } catch { /* header malformado — ignora */ }
+  const country = h.get("x-country") || h.get("x-nf-geo-country") || null;
+  return country ? { country, city: null, region: null, lat: null, lon: null } : null;
+}
+
+// Resumo textual curto da origem (ex.: "Sao Paulo, SP, BR").
+export function geoLabel(geo) {
+  if (!geo) return null;
+  return [geo.city, geo.region, geo.country].filter(Boolean).join(", ") || null;
+}
+
 // Extrai o segmento de rota apos /api/ (ex.: "owner/licenses/123").
 export function routePath(req, prefix = "/api/") {
   const url = new URL(req.url);

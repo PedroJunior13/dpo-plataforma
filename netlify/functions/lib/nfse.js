@@ -3,6 +3,13 @@
 // As notas sao municipais; o provedor abstrai o padrao da prefeitura.
 import { sql, one } from "./db.js";
 
+// Configuracao da emissao. Os PADROES ja vem com a tributacao mais favoravel a
+// empresa (EIRELI/Sociedade unipessoal optante pelo SIMPLES NACIONAL):
+//  - optante_simples_nacional = true (ISS recolhido pelo DAS, aliquota reduzida)
+//  - item_lista_servico 1.07 (suporte/licenciamento/consultoria em TI/dados)
+//  - aliquota ISS 2% (piso constitucional; muitos municipios praticam 2% p/ TI)
+// IMPORTANTE: confirme o item da lista e a aliquota do SEU municipio com a
+// contabilidade. Os valores sao parametrizaveis por variaveis de ambiente.
 const cfg = () => ({
   token: process.env.FOCUSNFE_TOKEN,
   base: (process.env.FOCUSNFE_ENV === "producao")
@@ -12,10 +19,40 @@ const cfg = () => ({
   im: process.env.EMITENTE_INSCRICAO_MUNICIPAL,
   municipio: process.env.EMITENTE_CODIGO_MUNICIPIO,
   item: process.env.NFSE_ITEM_LISTA_SERVICO || "1.07",
+  // Codigo tributario do municipio (CNAE/cnae fiscal) — opcional, alguns municipios exigem.
+  codigoTributario: process.env.NFSE_CODIGO_TRIBUTARIO_MUNICIPIO || undefined,
   aliquota: parseFloat(process.env.NFSE_ALIQUOTA_ISS || "0.02"),
+  // Regime tributario favoravel por padrao (Simples Nacional). Pode ser desligado.
+  optanteSimples: (process.env.NFSE_OPTANTE_SIMPLES || "true") !== "false",
+  // 6 = Microempresario e Empresa de Pequeno Porte (ME/EPP) — Simples Nacional.
+  regimeEspecial: process.env.NFSE_REGIME_ESPECIAL_TRIBUTACAO || undefined,
 });
 
 export function enabled() { return !!process.env.FOCUSNFE_TOKEN; }
+
+// Emissao automatica apos a compra. Ligada por padrao quando o token existe;
+// pode ser desligada com NFSE_AUTO=false (ex.: para homologar antes).
+export function autoEnabled() {
+  return enabled() && (process.env.NFSE_AUTO || "true") !== "false";
+}
+
+// Emite automaticamente a NFS-e do ULTIMO pagamento aprovado da assinatura.
+// Best-effort: nunca lanca — devolve {skipped|issued|error} para registro.
+export async function autoIssueForSubscription(subscriptionId) {
+  if (!autoEnabled()) return { skipped: "nfse_auto_off" };
+  try {
+    const pay = await one(sql`SELECT * FROM payments WHERE subscription_id=${subscriptionId}
+                              AND status IN ('approved','paid','active','confirmed') ORDER BY created_at DESC LIMIT 1`);
+    if (!pay) return { skipped: "sem_pagamento_aprovado" };
+    const exist = await one(sql`SELECT id, status FROM invoices WHERE payment_id=${pay.id} ORDER BY created_at DESC LIMIT 1`);
+    if (exist && exist.status !== "error") return { skipped: "ja_emitida", invoiceId: exist.id };
+    const res = await issueForPayment(pay.id);
+    return { issued: true, ...res };
+  } catch (e) {
+    console.error("[nfse:auto]", e?.message || e);
+    return { error: e?.message || String(e) };
+  }
+}
 
 // Emite uma NFS-e para um pagamento aprovado.
 export async function issueForPayment(paymentId) {
@@ -44,11 +81,16 @@ export async function issueForPayment(paymentId) {
       razao_social: tenant.name,
       email: tenant.email || undefined,
     },
+    // Natureza da operacao 1 = Tributacao no municipio (padrao para servico local).
+    natureza_operacao: "1",
+    optante_simples_nacional: c.optanteSimples,
+    regime_especial_tributacao: c.regimeEspecial,
     servico: {
       aliquota: c.aliquota,
-      discriminacao: `Licenca de uso da plataforma DPO PJ Protection — ${tenant.plan_id}.`,
+      discriminacao: `Licenca de uso e suporte da plataforma DPO PJ Protection (conformidade LGPD/GDPR) — modulo ${tenant.plan_id}.`,
       iss_retido: false,
       item_lista_servico: c.item,
+      codigo_tributario_municipio: c.codigoTributario,
       valor_servicos: Number(valor),
     },
   };

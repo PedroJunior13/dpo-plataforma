@@ -36,12 +36,27 @@ export function invitationMessage(license, plan, tenant) {
   ].join("\n");
 }
 
+// Gera o proximo numero/codigo legivel da licenca: DPO-L-{ANO}-{0001}.
+// Best-effort: se a sequence nao existir (migracao pendente), devolve null.
+async function nextLicenseNo() {
+  try {
+    const r = await one(sql`SELECT nextval('license_no_seq') AS n`);
+    const seq = String(r.n).padStart(4, "0");
+    return `DPO-L-${new Date().getFullYear()}-${seq}`;
+  } catch { return null; }
+}
+
 // ---------------------------------------------------------------
 //  Emissao de licenca (cria tenant se necessario)
 // ---------------------------------------------------------------
-export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", subscriptionId = null, validUntil = null, actor }) {
+export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", pricing = null, reason = null, validDays = null, subscriptionId = null, validUntil = null, actor }) {
   const plan = await one(sql`SELECT * FROM plans WHERE id=${planId}`);
   if (!plan) throw new Error("Plano inexistente.");
+
+  // Tipo comercial: 'free' = cortesia/avulsa SEM custo; 'paid' = paga.
+  // billingType "free" tambem marca cortesia (compat. com o seletor do painel).
+  const price = (pricing === "free" || billingType === "free") ? "free" : "paid";
+  const issueReason = (reason && String(reason).trim()) ? String(reason).trim().slice(0, 400) : null;
 
   // Cria tenant se nao foi passado um existente.
   let tid = tenantId;
@@ -56,22 +71,37 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     await sql`UPDATE tenants SET plan_id=${planId}, updated_at=now() WHERE id=${tid}`;
   }
 
-  // valid_until: avulso => +30 dias se nao informado; recorrente => segue assinatura
+  // valid_until:
+  //  - cortesia (free): +validDays (padrao 365) se nao informado;
+  //  - avulso pago (monthly): +30 dias se nao informado;
+  //  - recorrente: segue a assinatura (sem data fixa).
   let vu = validUntil;
-  if (!vu && billingType === "monthly") {
-    vu = new Date(Date.now() + 30 * 864e5).toISOString();
+  if (!vu) {
+    if (price === "free") {
+      const d = parseInt(validDays, 10);
+      const days = Number.isFinite(d) && d > 0 ? d : 365;
+      vu = new Date(Date.now() + days * 864e5).toISOString();
+    } else if (billingType === "monthly") {
+      vu = new Date(Date.now() + 30 * 864e5).toISOString();
+    }
   }
 
+  // Numero/codigo legivel e sequencial da licenca (DPO-L-{ANO}-{0001}).
+  // Resiliente: se a sequence ainda nao migrou, segue sem numero (nao bloqueia a emissao).
+  const licenseNo = await nextLicenseNo();
+
   const lic = await one(sql`
-    INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until)
+    INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason)
     VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
-            'issued', ${plan.client_quota}, ${vu})
+            'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason})
     RETURNING *`);
 
+  const priceLabel = price === "free" ? "cortesia (sem custo)" : "paga";
   await licenseEvent({
     licenseId: lic.id, tenantId: tid, event: "issued",
-    actorEmail: actor?.email, after: { plan_id: planId, billing_type: billingType, valid_until: vu },
-    note: `Licenca emitida (${plan.name}, ${billingType}).`,
+    actorEmail: actor?.email,
+    after: { plan_id: planId, billing_type: billingType, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
+    note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
   });
 
   return { license: lic, plan, link: activationLink(lic), message: invitationMessage(lic, plan, { name: tenant?.name }) };

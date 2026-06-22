@@ -11,7 +11,7 @@ import {
 import {
   json, ok, fail, unauthorized, forbidden, paymentRequired, readJson, clientIp, routePath,
 } from "./lib/http.js";
-import { audit } from "./lib/audit.js";
+import { audit, setAuditContext, auditOrigin } from "./lib/audit.js";
 import * as L from "./lib/licenses.js";
 import * as billing from "./lib/billing.js";
 import * as nfse from "./lib/nfse.js";
@@ -26,6 +26,10 @@ export default async function handler(req) {
   const method = req.method;
   const path = routePath(req); // ex.: "owner/licenses"
   const seg = path.split("/");
+
+  // Captura a origem (ip + dispositivo + geolocalizacao) uma unica vez por request,
+  // para que toda a trilha de auditoria registre DE ONDE a acao partiu.
+  setAuditContext(auditOrigin(req));
 
   try {
     // -------- PUBLICO (sem auth) --------
@@ -375,6 +379,31 @@ async function crmUpsertFromCheckout({ tenant: t, tenantId, planId, amount }) {
   return c.id;
 }
 
+// AUTO-CRM na emissao da licenca: garante que TODO novo cliente (compra ou emissao
+// manual) tenha um cadastro no CRM no estagio "cliente". Idempotente e best-effort.
+async function crmEnsureClientFromTenant(tenantId, planId, source = "licenca") {
+  try {
+    const t = await one(sql`SELECT id, name, email, phone, doc FROM tenants WHERE id=${tenantId}`);
+    if (!t) return null;
+    const doc = (t.doc || "").replace(/\D/g, "") || null;
+    const existing = await one(sql`SELECT id FROM crm_contacts WHERE tenant_id=${tenantId}
+      OR (email IS NOT NULL AND lower(email)=lower(${t.email || ""})) ORDER BY created_at DESC LIMIT 1`);
+    if (existing) {
+      await sql`UPDATE crm_contacts SET tenant_id=${tenantId}, stage='cliente', plan_interest=coalesce(${planId}, plan_interest),
+        company=coalesce(${t.name}, company), phone=coalesce(${t.phone || null}, phone), doc=coalesce(${doc}, doc),
+        last_contact_at=now(), updated_at=now() WHERE id=${existing.id}`;
+      return existing.id;
+    }
+    const c = await one(sql`
+      INSERT INTO crm_contacts (tenant_id, name, company, doc, email, phone, source, stage, plan_interest)
+      VALUES (${tenantId}, ${t.name}, ${t.name}, ${doc}, ${t.email || null}, ${t.phone || null}, ${source}, 'cliente', ${planId})
+      RETURNING id`);
+    await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email)
+      VALUES (${c.id}, 'nota', ${'Cliente cadastrado automaticamente na emissao da licenca (' + (planId || "") + ').'}, 'system')`;
+    return c.id;
+  } catch (e) { console.error("[crm:autoclient]", e?.message); return null; }
+}
+
 // =====================================================================
 //  AREA DO DONO (OWNER)
 // =====================================================================
@@ -440,14 +469,21 @@ async function ownerRoutes(req, user, seg, method) {
   if (r === "licenses" && method === "POST") {
     const b = await readJson(req);
     if (!b.tenantId && !b.tenant?.name) return fail("Informe um cliente (novo ou existente).");
+    const isFree = b.pricing === "free" || b.billingType === "free";
     const res = await L.issueLicense({
       tenantId: b.tenantId || null,
       tenant: b.tenant || null,
       planId: b.planId || "basic",
-      billingType: b.billingType || "monthly",
+      // Cortesia (sem custo) nao tem cobranca recorrente: forca avulsa por validade.
+      billingType: isFree ? "monthly" : (b.billingType || "monthly"),
+      pricing: isFree ? "free" : "paid",
+      reason: b.reason || null,
+      validDays: b.validDays || null,
       actor: user,
     });
-    await audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId: b.planId } });
+    // AUTO-CRM: toda licenca emitida manualmente tambem cadastra o cliente no CRM.
+    await crmEnsureClientFromTenant(res.license.tenant_id, b.planId || "basic", "emissao_manual");
+    await audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId: b.planId, license_no: res.license.license_no, pricing: res.license.pricing, reason: b.reason || null } });
     return ok({
       license: res.license, plan: res.plan,
       link: res.link, message: res.message,
@@ -553,19 +589,49 @@ async function ownerRoutes(req, user, seg, method) {
     });
     // Marca a assinatura como ativa (pagamento confirmado manualmente) e CRM => cliente.
     await sql`UPDATE subscriptions SET status='active' WHERE id=${sub.id}`;
-    await sql`UPDATE crm_contacts SET stage='cliente', updated_at=now() WHERE tenant_id=${sub.tenant_id}`;
-    await audit({ tenantId: sub.tenant_id, actorEmail: user.email, action: "license_issued_from_purchase", entity: "license", entityId: res.license.id, detail: { subscriptionId: sub.id, planId: sub.plan_id }, ip: clientIp(req) });
-    const t = await one(sql`SELECT phone FROM tenants WHERE id=${sub.tenant_id}`);
-    return ok({ license: res.license, plan: res.plan, link: res.link, message: res.message, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
+    await crmEnsureClientFromTenant(sub.tenant_id, sub.plan_id, "compra");
+    const t = await one(sql`SELECT name, email, phone FROM tenants WHERE id=${sub.tenant_id}`);
+
+    // ENVIO AUTOMATICO: licenca + credenciais/instrucoes de acesso vao direto ao
+    // e-mail do comprador (independente do "+ Emitir licenca" avulso). Best-effort:
+    // se o e-mail falhar, a emissao continua valida e o link fica disponivel ao dono.
+    let emailedTo = null;
+    if (t?.email) {
+      const sent = await safe(sendEmail({
+        tenantId: sub.tenant_id, to: t.email,
+        subject: "Seu acesso e sua licença — DPO PJ Protection",
+        html: licenseEmailHtml({ tenantName: t.name, planName: res.plan?.name, licenseKey: res.license.license_key, licenseNo: res.license.license_no, link: res.link }),
+        type: "license_credentials",
+      }), null);
+      if (sent) { emailedTo = t.email; await L.markSent(res.license.id, user).catch(() => {}); }
+    }
+    // EMISSAO AUTOMATICA da NFS-e (apos a compra). Best-effort e nao-bloqueante:
+    // se a integracao nao estiver configurada/aprovada, a licenca segue valida.
+    let nfseAuto = null;
+    try {
+      const nf = await nfse.autoIssueForSubscription(sub.id);
+      if (nf?.issued) { nfseAuto = "emitida"; await audit({ tenantId: sub.tenant_id, actorEmail: "system", action: "nfse_auto_issued", entity: "invoice", entityId: nf.invoiceId || null, detail: { ref: nf.ref } }); }
+      else if (nf?.error) nfseAuto = "erro";
+      else nfseAuto = nf?.skipped || null;
+    } catch (e) { console.error("[nfse:auto:route]", e?.message); }
+    await audit({ tenantId: sub.tenant_id, actorEmail: user.email, action: "license_issued_from_purchase", entity: "license", entityId: res.license.id, detail: { subscriptionId: sub.id, planId: sub.plan_id, license_no: res.license.license_no, emailedTo, nfse: nfseAuto } });
+    return ok({ license: res.license, plan: res.plan, link: res.link, message: res.message, emailedTo, nfse: nfseAuto, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
   }
 
   // ---- AUDITORIA (trilha completa da area negocial: eventos + audit_log) ----
   if (r === "audit" && method === "GET") {
-    const events = await safe(sql`SELECT 'license' AS kind, id::text AS id, created_at, event AS action, actor_email, tenant_id, note AS detail
+    const lim = Math.min(parseInt(new URL(req.url).searchParams.get("limit") || "300", 10) || 300, 500);
+    const events = await safe(sql`SELECT 'license' AS kind, id::text AS id, created_at, event AS action, actor_email, tenant_id, note AS detail,
+                                    NULL AS ip, NULL AS user_agent, NULL AS geo_label
                              FROM license_events ORDER BY created_at DESC LIMIT 200`, []);
-    const logs = await safe(sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail
-                           FROM audit_log ORDER BY created_at DESC LIMIT 200`, []);
-    const merged = [...events, ...logs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 300);
+    // Inclui origem detalhada (ip, dispositivo, local) — fallback gracioso se as colunas ainda nao migraram.
+    const logs = await safe(sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail,
+                                  ip, user_agent, geo_label
+                           FROM audit_log ORDER BY created_at DESC LIMIT 200`,
+                      await safe(sql`SELECT 'audit' AS kind, id::text AS id, created_at, action, actor_email, tenant_id, (detail::text) AS detail,
+                                  ip, NULL AS user_agent, NULL AS geo_label
+                           FROM audit_log ORDER BY created_at DESC LIMIT 200`, []));
+    const merged = [...events, ...logs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, lim);
     return ok({ events: merged });
   }
 
@@ -590,6 +656,32 @@ async function ownerRoutes(req, user, seg, method) {
 }
 
 function decorate(lic) { return { ...lic, activation_link: L.activationLink(lic) }; }
+
+// E-mail HTML com a licenca + credenciais/instrucoes de primeiro acesso.
+// Enviado automaticamente ao comprador quando o dono emite a licenca pela aba Compras.
+function licenseEmailHtml({ tenantName, planName, licenseKey, licenseNo, link }) {
+  const no = licenseNo ? `<tr><td style="padding:4px 0;color:#667">Nº da licença</td><td style="padding:4px 0;font-weight:700">${escapeHtml(licenseNo)}</td></tr>` : "";
+  return `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a2e">
+    <h2 style="margin:0 0 4px">Bem-vindo(a) à DPO PJ Protection 🛡️</h2>
+    <p style="color:#555;line-height:1.6">Olá${tenantName ? `, <strong>${escapeHtml(tenantName)}</strong>` : ""}! Seu acesso à plataforma de conformidade LGPD/GDPR já está liberado. Siga os 3 passos abaixo para começar.</p>
+    <table style="width:100%;border-collapse:collapse;background:#f6f7fb;border-radius:10px;padding:8px;margin:14px 0">
+      <tr><td style="padding:4px 0;color:#667">Módulo contratado</td><td style="padding:4px 0;font-weight:700">${escapeHtml(planName || "")}</td></tr>
+      ${no}
+      <tr><td style="padding:4px 0;color:#667">Sua licença</td><td style="padding:4px 0;font-weight:700;font-family:monospace">${escapeHtml(licenseKey)}</td></tr>
+    </table>
+    <ol style="line-height:1.8;color:#333">
+      <li>Clique no botão <strong>Ativar meu acesso</strong> abaixo.</li>
+      <li>Crie seu usuário (seu <strong>e-mail</strong> e uma <strong>senha</strong>).</li>
+      <li>A licença já vem preenchida — é só confirmar para liberar o módulo.</li>
+    </ol>
+    <p style="text-align:center;margin:22px 0">
+      <a href="${escapeHtml(link)}" style="background:#c9a14a;color:#1a1a2e;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:10px;display:inline-block">Ativar meu acesso →</a>
+    </p>
+    <p style="color:#888;font-size:12px;line-height:1.5">Se o botão não funcionar, copie e cole este link no navegador:<br><span style="word-break:break-all">${escapeHtml(link)}</span></p>
+    <hr style="border:none;border-top:1px solid #eee;margin:18px 0">
+    <p style="color:#999;font-size:12px">Este link é pessoal e libera o seu módulo no primeiro acesso. Em caso de dúvida, basta responder este e-mail.<br>DPO PJ Protection — PJ Technology Solutions.</p>
+  </div>`;
+}
 
 // =====================================================================
 //  CRM — funil de vendas, atividades e campanhas de fidelizacao
@@ -705,42 +797,60 @@ async function ownerCrmRoutes(req, user, cseg, method) {
   }
 
   // ---- CAMPANHAS (fidelizacao/retencao) ----
+  // Resiliente: se a tabela ainda nao migrou, devolve lista vazia em vez de quebrar a UI.
   if (head === "campaigns" && !cseg[1] && method === "GET") {
-    const rows = await sql`SELECT * FROM crm_campaigns ORDER BY created_at DESC LIMIT 100`;
+    const rows = await safe(sql`SELECT * FROM crm_campaigns ORDER BY created_at DESC LIMIT 100`, []);
     return ok({ campaigns: rows });
   }
   if (head === "campaigns" && !cseg[1] && method === "POST") {
     const b = await readJson(req);
     if (!b.name || !b.message) return fail("Informe nome e mensagem da campanha.");
     const channel = b.channel === "email" ? "email" : "whatsapp";
-    const c = await one(sql`INSERT INTO crm_campaigns (name, channel, audience, message, scheduled_at)
-      VALUES (${b.name}, ${channel}, ${b.audience || "todos"}, ${b.message}, ${b.scheduledAt || null}) RETURNING *`);
+    const c = await safe(one(sql`INSERT INTO crm_campaigns (name, channel, audience, message, scheduled_at)
+      VALUES (${b.name}, ${channel}, ${b.audience || "todos"}, ${b.message}, ${b.scheduledAt || null}) RETURNING *`), null);
+    if (!c) return fail("Nao foi possivel criar a campanha agora. Tente novamente em instantes.", 503);
     await audit({ actorEmail: user.email, action: "crm_campaign_created", entity: "crm_campaign", entityId: c.id });
     return ok({ campaign: c });
   }
   // Disparo da campanha: monta os destinatarios + links prontos (wa.me / mailto).
   // Sem custo de API: o dono dispara em 1 clique pelos links gerados.
   if (head === "campaigns" && cseg[1] && cseg[2] === "send" && method === "POST") {
-    const camp = await one(sql`SELECT * FROM crm_campaigns WHERE id=${cseg[1]}`);
+    const camp = await safe(one(sql`SELECT * FROM crm_campaigns WHERE id=${cseg[1]}`), null);
     if (!camp) return fail("Campanha nao encontrada.", 404);
     const aud = camp.audience || "todos";
-    const contacts = aud === "todos"
-      ? await sql`SELECT * FROM crm_contacts WHERE phone IS NOT NULL OR email IS NOT NULL`
-      : await sql`SELECT * FROM crm_contacts WHERE stage=${aud} AND (phone IS NOT NULL OR email IS NOT NULL)`;
+    const contacts = await safe(
+      aud === "todos"
+        ? sql`SELECT * FROM crm_contacts WHERE phone IS NOT NULL OR email IS NOT NULL`
+        : sql`SELECT * FROM crm_contacts WHERE stage=${aud} AND (phone IS NOT NULL OR email IS NOT NULL)`,
+      []);
     const recipients = contacts.map(c => {
-      const msg = camp.message.replace(/\{nome\}/gi, c.name || "").replace(/\{empresa\}/gi, c.company || "");
+      const msg = (camp.message || "").replace(/\{nome\}/gi, c.name || "").replace(/\{empresa\}/gi, c.company || "");
       return {
         id: c.id, name: c.name, phone: c.phone, email: c.email,
         whatsapp: c.phone ? waLink(c.phone, msg) : null,
         mailto: c.email ? `mailto:${c.email}?subject=${encodeURIComponent(camp.name)}&body=${encodeURIComponent(msg)}` : null,
       };
     });
-    await sql`UPDATE crm_campaigns SET status='enviada', sent_count=${recipients.length}, sent_at=now() WHERE id=${camp.id}`;
-    for (const c of contacts) {
-      await sql`INSERT INTO crm_activities (contact_id, type, body, actor_email) VALUES (${c.id}, 'campanha', ${'Campanha: ' + camp.name}, ${user.email})`;
+    // Canal e-mail: dispara de fato via Resend quando configurado (objetivo/automatizado).
+    let emailed = 0;
+    if (camp.channel === "email") {
+      for (const r of recipients) {
+        if (!r.email) continue;
+        const msg = (camp.message || "").replace(/\{nome\}/gi, r.name || "").replace(/\{empresa\}/gi, "");
+        const sent = await safe(sendEmail({
+          to: r.email, subject: camp.name,
+          html: `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;line-height:1.6">${escapeHtml(msg).replace(/\n/g, "<br>")}</div>`,
+          type: "campaign",
+        }), null);
+        if (sent) emailed++;
+      }
     }
-    await audit({ actorEmail: user.email, action: "crm_campaign_sent", entity: "crm_campaign", entityId: camp.id, detail: { recipients: recipients.length } });
-    return ok({ recipients, sentCount: recipients.length });
+    await safe(sql`UPDATE crm_campaigns SET status='enviada', sent_count=${recipients.length}, sent_at=now() WHERE id=${camp.id}`, null);
+    for (const c of contacts) {
+      await safe(sql`INSERT INTO crm_activities (contact_id, type, body, actor_email) VALUES (${c.id}, 'campanha', ${'Campanha: ' + camp.name}, ${user.email})`, null);
+    }
+    await audit({ actorEmail: user.email, action: "crm_campaign_sent", entity: "crm_campaign", entityId: camp.id, detail: { recipients: recipients.length, emailed } });
+    return ok({ recipients, sentCount: recipients.length, emailed });
   }
 
   return fail("Rota de CRM nao encontrada: " + cseg.join("/"), 404);
@@ -1033,10 +1143,17 @@ async function ownerDashboard() {
     GROUP BY 1 ORDER BY 1`, []);
   // Atividade recente (trilha de auditoria resumida).
   const recent = await safe(sql`SELECT created_at, action, actor_email, tenant_id FROM audit_log ORDER BY created_at DESC LIMIT 8`, []);
+  // Status detalhado da NFS-e (o que ainda falta configurar para a emissao automatica).
+  const nfseMissing = [];
+  if (!process.env.FOCUSNFE_TOKEN) nfseMissing.push("FOCUSNFE_TOKEN");
+  if (!process.env.EMITENTE_CNPJ) nfseMissing.push("EMITENTE_CNPJ");
+  if (!process.env.EMITENTE_INSCRICAO_MUNICIPAL) nfseMissing.push("EMITENTE_INSCRICAO_MUNICIPAL");
+  if (!process.env.EMITENTE_CODIGO_MUNICIPIO) nfseMissing.push("EMITENTE_CODIGO_MUNICIPIO");
   return ok({
     totals, mrrCents: mrr.cents, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
-    nfseEnabled: nfse.enabled(), gateways: billing.availableGateways(),
+    nfseEnabled: nfse.enabled(), nfseAuto: nfse.autoEnabled(), nfseMissing,
+    gateways: billing.availableGateways(),
   });
 }
 

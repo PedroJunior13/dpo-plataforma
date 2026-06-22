@@ -110,6 +110,16 @@ CREATE TABLE IF NOT EXISTS licenses (
 );
 CREATE INDEX IF NOT EXISTS idx_lic_tenant ON licenses(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_lic_status ON licenses(status);
+-- Numero/codigo da licenca legivel e sequencial (gestao + auditoria).
+-- Formato gerado na emissao: DPO-L-{ANO}-{0001}. Combinado com a coluna `version`
+-- (que incrementa a cada mudanca de estado) forma o "codigo versionado".
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS license_no TEXT;
+CREATE SEQUENCE IF NOT EXISTS license_no_seq START 1001;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lic_no ON licenses(license_no);
+-- Tipo comercial da licenca: 'paid' (paga) ou 'free' (cortesia/avulsa SEM custo).
+-- Toda licenca emitida tem controle: numero (license_no) + versao + tipo + motivo.
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS pricing TEXT NOT NULL DEFAULT 'paid';
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS issue_reason TEXT;
 
 -- =====================================================================
 --  6) AUDITORIA DE LICENCAS (append-only, imutavel, versionado)
@@ -208,6 +218,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id);
+-- Enriquecimento da trilha: origem detalhada (dispositivo + geolocalizacao aproximada).
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS geo        JSONB;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS geo_label  TEXT;
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 
 -- =====================================================================
 -- 11) OPERACIONAL LGPD (multi-tenant) — clientes/empresas geridos

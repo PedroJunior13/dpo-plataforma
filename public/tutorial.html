@@ -44,7 +44,7 @@
 
   <div class="card toc" style="margin:18px 0">
     <b>Índice</b>
-    <a href="#painel">1. Visão geral do painel (as 7 abas)</a>
+    <a href="#painel">1. Visão geral do painel (as 6 abas)</a>
     <a href="#caminhos">2. Os dois caminhos de entrada do cliente</a>
     <a href="#compras">3. Compras → gerar a licença em 1 clique ⭐</a>
     <a href="#emitir">4. Emitir licença manualmente (venda assistida)</a>
@@ -70,12 +70,12 @@
     <li><span class="tab">Licenças</span> — licenças &amp; assinantes unificados (status, upgrade/downgrade, suporte e acesso ao ambiente do cliente).</li>
     <li><span class="tab">CRM</span> <span class="new">NOVO</span> — funil de vendas, histórico de relacionamento e campanhas de fidelização.</li>
     <li><span class="tab">Suporte</span> <span class="new">NOVO</span> — <b>Service Desk</b>: fila de chamados abertos pelos clientes/consultores, com SLA, alertas de novo chamado, status e resposta direta. O contador vermelho ao lado do nome mostra quantos chamados <b>aguardam sua resposta</b>.</li>
-    <li><span class="tab">Financeiro</span> — pagamentos recebidos e emissão de NFS-e.</li>
-    <li><span class="tab">Auditoria</span> — trilha imutável de tudo (licenças, suporte, segurança e administração).</li>
+    <li><span class="tab">Financeiro</span> — pagamentos recebidos e emissão de NFS-e (automática após a compra).</li>
   </ul>
   <p>Ainda na barra: <span class="btnref">Consultoria ↗</span> (entra no seu ambiente ilimitado de consultoria), <span class="btnref">Tutorial</span> (esta página) e <span class="btnref">Sair</span>.</p>
+  <div class="note"><b>Auditoria saiu da barra de menu</b> <span class="new">NOVO</span> — agora a trilha imutável fica <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b>, mostrando os <b>últimos 15 eventos</b> com <b>barra de rolagem</b> e a <b>origem/local</b> de cada registro (IP, dispositivo e geolocalização aproximada). Veja o item 13.</div>
   <div class="note">Os 5 cartões do topo do <span class="tab">Painel</span> são <b>clicáveis</b>: clicar leva direto à aba correspondente (ex.: “Compras a liberar” abre <span class="tab">Compras</span>).</div>
-  <div class="note ok"><b>Novo:</b> todo bloco de informação do painel tem um selo <b>ⓘ</b>. Clique no bloco (ou no selo) para abrir uma <b>janela com a explicação daquele bloco</b> e, quando fizer sentido, um botão que leva direto à área certa. Use sempre que tiver dúvida sobre o que um número ou gráfico significa.</div>
+  <div class="note ok"><b>Novo:</b> todo bloco de informação do painel tem um selo <b>ⓘ</b>. Clique no bloco (ou no selo) para abrir uma <b>janela com a explicação daquele bloco</b> (sem sair da tela — a janela é apenas informativa, não redireciona). Use sempre que tiver dúvida sobre o que um número ou gráfico significa.</div>
 
   <!-- 2 -->
   <h2 id="caminhos">2. Os dois caminhos de entrada do cliente</h2>
@@ -98,15 +98,21 @@
   <div class="step"><div class="n">1</div><div>No <span class="tab">Painel</span>, o KPI <b>“Compras a liberar”</b> fica dourado quando há pedidos pendentes. Clique nele (ou abra a aba <span class="tab">Compras</span>).</div></div>
   <div class="step"><div class="n">2</div><div>Confira a linha: <b>Quando · Cliente · Módulo · Valor · Forma · Situação</b>. Situação <b>“Aguardando liberação”</b> = ainda sem licença.</div></div>
   <div class="step"><div class="n">3</div><div>Clique em <span class="btnref">Gerar licença</span> e confirme. A chave é criada no perfil do cliente, no módulo comprado.</div></div>
-  <div class="step"><div class="n ok">4</div><div>Abre a janela com <b>Link de ativação</b>, <b>Licença</b> e <b>Mensagem pronta</b> — cada um com botão <b>Copiar</b>, e <b>Enviar no WhatsApp</b> quando houver telefone.</div></div>
-  <div class="note ok">Pronto: a situação vira <b>“Licença gerada”</b>. Para rever depois, use <span class="btnref">Ver licença</span> (leva à aba <span class="tab">Licenças</span>). Use <span class="btnref">Atualizar</span> para recarregar a lista.</div>
+  <div class="step"><div class="n ok">4</div><div>Abre a janela com o <b>Número da licença</b> (ex.: <code>DPO-L-2026-1001</code>), o <b>Link de ativação</b>, a <b>chave da Licença</b> e a <b>Mensagem pronta</b> — cada um com botão <b>Copiar</b>, e <b>Enviar no WhatsApp</b> quando houver telefone.</div></div>
+  <div class="note ok"><b>Envio automático ao comprador</b> <span class="new">NOVO</span> — ao clicar em <span class="btnref">Gerar licença</span>, a plataforma já <b>envia por e-mail</b>, para o endereço do comprador, a <b>licença + as credenciais de acesso</b> (com o botão “Ativar meu acesso”). A janela confirma para qual e-mail foi enviado. Você não precisa fazer mais nada — o WhatsApp/copiar continuam disponíveis como reforço. Em paralelo, o comprador é <b>incluído automaticamente no CRM</b> (estágio “Cliente”) e a <b>NFS-e é emitida sozinha</b> (item 10). A situação vira <b>“Licença gerada”</b>; use <span class="btnref">Ver licença</span> para rever e <span class="btnref">Atualizar</span> para recarregar.</div>
 
   <!-- 4 -->
   <h2 id="emitir">4. Emitir licença manualmente (venda assistida)</h2>
   <div class="step"><div class="n">1</div><div>Clique em <span class="btnref">+ Emitir licença</span> (topo do <span class="tab">Painel</span> ou na aba <span class="tab">Licenças</span>).</div></div>
   <div class="step"><div class="n">2</div><div>Preencha <b>Nome do cliente</b> (obrigatório), CNPJ/CPF, E-mail e WhatsApp. Dica: digite o CNPJ e clique em <span class="btnref">Buscar</span> para preencher nome/e-mail/telefone automaticamente.</div></div>
-  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e a <b>Cobrança</b> (Avulsa — bloqueia no vencimento · Recorrente — renova automático, −5%).</div></div>
-  <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
+  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e o <b>Tipo de licença</b>:
+    <ul style="margin:6px 0 0 16px">
+      <li><b>Paga (com cobrança)</b> — define a <b>Cobrança</b>: Avulsa (bloqueia no vencimento) ou Recorrente (renova automático, −5%).</li>
+      <li><b>Cortesia — avulsa SEM custo</b> <span class="new">NOVO</span> — gera a licença <b>gratuita</b> (parceria, teste estendido, brinde, cliente vitalício). Informe a <b>Validade em dias</b> (padrão 365) e o <b>Motivo da cortesia</b> (obrigatório, para controle).</li>
+    </ul>
+  </div>
+  <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Nº da licença</b> (ex.: <code>DPO-L-2026-1001</code>), um <b>selo Paga/Cortesia</b>, o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
+  <div class="note ok"><b>Controle total de cada licença</b> <span class="new">NOVO</span> — toda licença gerada (paga ou cortesia) recebe <b>número sequencial</b> + <b>versão</b> e fica registrada na <span class="tab">Auditoria</span>. Na lista de <span class="tab">Licenças</span> cada linha mostra o selo <b>Paga</b> ou <b>Cortesia</b> (com o motivo no “Gerenciar”), permitindo distinguir vendas de brindes a qualquer momento.</div>
   <div class="note">Para reenviar a qualquer momento: aba <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Enviar/Copiar link</span>. Todo envio fica registrado na <span class="tab">Auditoria</span>.</div>
 
   <!-- 5 -->
@@ -201,12 +207,15 @@
     <li><b>Receita aprovada</b> (gráfico dos últimos 6 meses) e <b>Status das licenças</b> (barras).</li>
     <li><b>Funil de vendas</b> e <b>Distribuição por módulo</b> (com receita por plano) + <b>Integrações</b> (gateways de pagamento e NFS-e).</li>
     <li><b>Vencimentos &amp; atrasos</b> (próximos 7 dias): cada linha traz o botão <span class="btnref">Cobrar</span>, que abre o WhatsApp com a mensagem pronta.</li>
-    <li><b>Atividade recente:</b> últimos eventos, com atalho <span class="btnref">Ver auditoria</span>.</li>
+    <li><b>Atividade recente:</b> últimos eventos (resumo).</li>
+    <li><b>Auditoria</b> <span class="new">NOVO</span>: no fim do Painel, o bloco mostra os <b>últimos 15 registros</b> em uma área com <b>barra de rolagem</b>, com <b>Quando · Ação · Responsável · Origem (IP, dispositivo e local) · Detalhe</b> e o botão <span class="btnref">Atualizar</span>.</li>
   </ul>
 
   <!-- 10 -->
-  <h2 id="financeiro">10. Financeiro e NFS-e</h2>
-  <p>Aba <span class="tab">Financeiro</span>: lista os pagamentos (Data, Cliente, Método, Valor, Status). Em pagamentos <b>aprovados/pagos</b>, o botão <span class="btnref">Emitir NFS-e</span> dispara a nota (quando a integração Focus NFe estiver configurada).</p>
+  <h2 id="financeiro">10. Financeiro e NFS-e (emissão automática) <span class="new">NOVO</span></h2>
+  <p>Aba <span class="tab">Financeiro</span>: lista os pagamentos (Data, Cliente, Método, Valor, Status). Em pagamentos <b>aprovados/pagos</b>, o botão <span class="btnref">Emitir NFS-e</span> dispara a nota manualmente — mas, com a integração configurada, <b>a nota sai sozinha</b> assim que a compra é aprovada/licença gerada.</p>
+  <div class="note ok"><b>NFS-e automática:</b> a cada compra aprovada, a plataforma emite a Nota Fiscal de Serviço do <b>último pagamento aprovado</b> da assinatura, sem você precisar clicar. A emissão é <b>idempotente</b> (nunca duplica) e <b>tolerante a falha</b> (se a prefeitura/provedor estiver fora do ar, registra o erro e você reemite depois). O bloco <b>Integrações</b> do <span class="tab">Painel</span> mostra o status: <b>NFS-e automática ligada</b> ou a lista do que <b>falta configurar</b>.</div>
+  <div class="note warn"><b>Tributação favorável já pré-configurada</b> (parametrizável por variáveis de ambiente): optante pelo <b>Simples Nacional</b> (ISS recolhido no DAS), item da lista de serviço <b>1.07</b> (TI/dados) e alíquota de ISS <b>2%</b> (piso). Configure no Netlify: <code>FOCUSNFE_TOKEN</code>, <code>EMITENTE_CNPJ</code>, <code>EMITENTE_INSCRICAO_MUNICIPAL</code> e <code>EMITENTE_CODIGO_MUNICIPIO</code>. Confirme o item e a alíquota do seu município com a contabilidade. Para homologar antes, use <code>NFSE_AUTO=false</code>.</div>
 
   <!-- 11 -->
   <h2 id="cobranca">11. Cobrança automática e vencimentos</h2>
@@ -232,9 +241,12 @@
   </ul>
 
   <!-- 13 -->
-  <h2 id="auditoria">13. Auditoria e versionamento</h2>
-  <p>Aba <span class="tab">Auditoria</span>: registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada, <b>chamado de suporte aberto/respondido/status alterado (Service Desk)</b> e ações de CRM (contato, estágio, campanha).
-     Cada licença tem um número de <b>versão</b> (<code>vN</code>) que incrementa a cada mudança de estado — rastreabilidade total para fins legais e de conformidade.</p>
+  <h2 id="auditoria">13. Auditoria e versionamento <span class="new">NOVO</span></h2>
+  <p>A trilha de auditoria saiu da barra de menu e agora vive <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b> — os <b>últimos 15 eventos</b> em uma área com <b>barra de rolagem</b> e o botão <span class="btnref">Atualizar</span>. É um registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, <b>licença avulsa sem custo</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada, <b>chamado de suporte aberto/respondido/status alterado (Service Desk)</b> e ações de CRM (contato, estágio, campanha).</p>
+  <ul>
+    <li><b>Origem/local de cada registro</b> <span class="new">NOVO</span>: cada evento mostra de <b>onde</b> ele veio — <b>IP</b>, <b>dispositivo</b> (sistema/navegador) e a <b>geolocalização aproximada</b> (cidade/UF/país) derivada do IP, para investigar qualquer ação suspeita.</li>
+    <li><b>Número e versão da licença</b>: cada licença tem um <b>número sequencial versionado</b> (ex.: <code>DPO-L-2026-1001</code>) e uma <b>versão</b> (<code>vN</code>) que incrementa a cada mudança de estado — controle e rastreabilidade total de <b>cada licença gerada</b>, paga ou avulsa, para fins legais e de conformidade.</li>
+  </ul>
 
   <!-- 14 -->
   <h2 id="demo">14. Link de demonstração (7 dias)</h2>
@@ -254,7 +266,7 @@
     <li>Conformidade: <span class="tab">Auditoria</span> registra tudo.</li>
   </ol>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.5.0.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.6.0.</p>
 </div>
 </main>
 </body>

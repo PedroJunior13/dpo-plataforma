@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.5.0";
+  const PLATFORM_VERSION = "2.6.0";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -76,7 +76,7 @@
     sec_support: { t: "Suporte — Service Desk", b: "Central de chamados dos consultores e clientes, em fila por ordem de abertura. Acompanhe SLA de 1ª resposta por prioridade, mude o status e responda direto ao solicitante (a resposta vai por e-mail e fica no histórico do chamado).", goto: "support", gl: "Abrir Suporte" },
     sup_status: { t: "Chamados por status", b: "Distribuição da fila por situação: aberto, em andamento, aguardando cliente, resolvido e fechado. Use o filtro do topo para focar numa situação." },
     sup_priority: { t: "Chamados por prioridade", b: "Quantidade de chamados em cada nível de prioridade. O SLA de 1ª resposta é: urgente 4h, alta 8h, normal 24h, baixa 48h." },
-    sec_audit: { t: "Auditoria", b: "Trilha completa e imutável: licenças, suporte, segurança e ações administrativas. Cada licença tem um número de versão que incrementa a cada mudança de estado.", goto: "audit", gl: "Abrir Auditoria" },
+    sec_audit: { t: "Auditoria", b: "Trilha completa e imutável: licenças, suporte, segurança e ações administrativas. Mostra os 15 registros mais recentes (role para ver todos), incluindo a ORIGEM de cada ação — local aproximado (cidade/UF/país), IP e dispositivo/navegador.", b2: "Cada licença também tem um número de versão que incrementa a cada mudança de estado." },
     dash_revenue: { t: "Receita aprovada", b: "Soma dos pagamentos aprovados nos últimos 6 meses, mês a mês. Use para acompanhar a evolução do faturamento.", goto: "payments", gl: "Ver Financeiro" },
     dash_licstatus: { t: "Status das licenças", b: "Distribuição das licenças por situação (ativa, emitida, suspensa, etc.). Verde indica saudável; vermelho indica que exige atenção.", goto: "licenses", gl: "Ver Licenças" },
     dash_funnel: { t: "Funil de vendas (CRM)", b: "Quantidade e valor de oportunidades em cada estágio do funil. Trabalhe os estágios no CRM para aumentar a conversão.", goto: "crm", gl: "Abrir CRM" },
@@ -87,12 +87,12 @@
   function openInfo(key) {
     const i = INFO[key]; if (!i) return;
     $("#g_title").textContent = i.t;
+    // Janela puramente informativa (contexto inerente do bloco). NÃO redireciona:
+    // por decisão de UX, clicar num bloco explica o bloco — não tira o dono da tela atual.
+    const extra = i.b2 ? `<p class="muted" style="line-height:1.65;font-size:13px;margin-top:10px">${esc(i.b2)}</p>` : "";
     $("#g_body").innerHTML =
-      `<p class="muted" style="line-height:1.65;font-size:14px">${esc(i.b)}</p>` +
-      (i.goto ? `<button class="btn gold block" id="g_goto" style="margin-top:16px">${esc(i.gl || "Ir para a área")} →</button>` : "");
+      `<p class="muted" style="line-height:1.65;font-size:14px">${esc(i.b)}</p>` + extra;
     openModal("modalGeneric");
-    const g = $("#g_goto");
-    if (g) g.onclick = () => { closeModal("modalGeneric"); navTo(i.goto); };
   }
 
   // ---------- status helpers ----------
@@ -126,7 +126,7 @@
     $$(".view").forEach((v) => v.classList.add("hide"));
     const sec = $("#view-" + view); if (sec) sec.classList.remove("hide");
     ({ dashboard: loadDashboard, purchases: loadPurchases, licenses: loadLicenses,
-      crm: loadCrm, payments: loadPayments, support: loadSupport, audit: loadAudit }[view] || (() => {}))();
+      crm: loadCrm, payments: loadPayments, support: loadSupport }[view] || (() => {}))();
   }
 
   // ===================================================================
@@ -185,9 +185,18 @@
 
       // Integrações
       const gws = d.gateways || [];
+      let nfseLine;
+      if (d.nfseEnabled) {
+        nfseLine = `<span class="tag active">ativa</span>` +
+          (d.nfseAuto ? ` <span class="tag active">emissão automática</span>` : ` <span class="tag pending">automática desligada</span>`);
+      } else {
+        const miss = (d.nfseMissing || []);
+        nfseLine = `<span class="tag pending">não configurada</span>` +
+          (miss.length ? `<div class="small muted" style="margin-top:4px">Falta definir: ${miss.map(esc).join(", ")}</div>` : "");
+      }
       $("#integ").innerHTML =
         `<div>Pagamento: ${gws.length ? gws.map((g) => `<span class="tag active" style="text-transform:capitalize">${esc(g)}</span>`).join(" ") : '<span class="tag grace">manual (sem gateway)</span>'}</div>` +
-        `<div style="margin-top:8px">NFS-e: ${d.nfseEnabled ? '<span class="tag active">ativa</span>' : '<span class="tag pending">não configurada</span>'}</div>`;
+        `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>`;
 
       // Vencimentos
       const ov = d.overdue || [];
@@ -206,6 +215,9 @@
         `<div class="flex between" style="padding:6px 0;border-bottom:1px solid var(--line)">
           <span>${esc(actionLabel(r.action))}</span><span class="small muted">${esc(r.actor_email || "system")} · ${dtt(r.created_at)}</span></div>`).join("")
         : `<p class="muted">Sem atividade recente.</p>`;
+
+      // Painel de auditoria (rodapé do Painel) — últimos 15 registros com origem.
+      loadAudit();
     } catch (e) { $("#kpis").innerHTML = `<div class="card" style="color:#ff9aa8">${esc(e.message)}</div>`; }
   }
 
@@ -257,11 +269,23 @@
       const q = p.client_quota == null ? "ilimitado" : p.client_quota + " clientes";
       return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(p.price_month_cents)}/mês</option>`;
     }).join("");
-    ["e_name", "e_doc", "e_email", "e_phone"].forEach((id) => { $("#" + id).value = ""; });
+    ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
+    if ($("#e_validdays")) $("#e_validdays").value = "";
+    if ($("#e_pricing")) $("#e_pricing").value = "paid";
+    syncPricingFields();
     $("#emitForm").classList.remove("hide");
     $("#emitResult").classList.add("hide");
     openModal("modalEmitir");
   }
+  // Alterna campos conforme o tipo: cortesia esconde "Cobrança" e mostra validade + motivo.
+  function syncPricingFields() {
+    const free = $("#e_pricing") && $("#e_pricing").value === "free";
+    const t = (id, on) => { const el = $("#" + id); if (el) el.classList.toggle("hide", !on); };
+    t("e_billing_wrap", !free);
+    t("e_validdays_wrap", free);
+    t("e_reason_wrap", free);
+  }
+  { const ep = $("#e_pricing"); if (ep) ep.addEventListener("change", syncPricingFields); }
   $("#btnEmitir").addEventListener("click", openEmitir);
   $("#btnEmitirTop").addEventListener("click", openEmitir);
   $("#btnEmitOutra").addEventListener("click", openEmitir);
@@ -285,9 +309,16 @@
     if (!name) { toast("Informe o nome do cliente."); return; }
     const btn = $("#btnDoEmit"); btn.disabled = true; btn.textContent = "Gerando…";
     try {
+      const pricing = $("#e_pricing") ? $("#e_pricing").value : "paid";
+      const free = pricing === "free";
+      if (free && !$("#e_reason").value.trim()) { toast("Informe o motivo da cortesia (controle)."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
       const body = {
         tenant: { name, doc: $("#e_doc").value.trim(), email: $("#e_email").value.trim(), phone: $("#e_phone").value.trim() },
-        planId: $("#e_plan").value, billingType: $("#e_billing").value,
+        planId: $("#e_plan").value,
+        pricing,
+        billingType: free ? "monthly" : $("#e_billing").value,
+        reason: free ? $("#e_reason").value.trim() : null,
+        validDays: free ? (parseInt($("#e_validdays").value, 10) || null) : null,
       };
       const r = await api("/owner/licenses", { method: "POST", body: JSON.stringify(body) });
       showEmitResult(r);
@@ -298,6 +329,22 @@
     $("#r_link").textContent = r.link || "";
     $("#r_key").textContent = r.license?.license_key || "";
     $("#r_msg").textContent = r.message || "";
+    // Nº/código da licença (versionado).
+    const no = r.license?.license_no || "";
+    $("#r_no").textContent = no;
+    $("#r_nobox").classList.toggle("hide", !no);
+    // Selo do tipo comercial (paga / cortesia sem custo).
+    const pb = $("#r_pricing");
+    if (pb) {
+      const free = (r.license?.pricing || "paid") === "free";
+      pb.textContent = free ? "Cortesia (sem custo)" : "Paga";
+      pb.className = "tag " + (free ? "issued" : "active");
+      pb.style.marginLeft = "6px";
+    }
+    // Confirmação de envio automático ao comprador (quando emitido pela aba Compras).
+    const em = $("#r_emailed");
+    if (r.emailedTo) em.textContent = `Licença + credenciais enviadas automaticamente para ${r.emailedTo}.`;
+    else em.textContent = "Copie e envie ao cliente.";
     const wa = $("#r_wa");
     if (r.whatsapp) { wa.href = r.whatsapp; wa.classList.remove("hide"); } else wa.classList.add("hide");
     $("#emitForm").classList.add("hide");
@@ -334,6 +381,7 @@
     } catch (e) { tb.innerHTML = `<tr><td colspan="7" style="color:#ff9aa8">${esc(e.message)}</td></tr>`; }
   }
   $("#btnReloadPurch").addEventListener("click", loadPurchases);
+  { const ar = $("#btnAuditReload"); if (ar) ar.addEventListener("click", loadAudit); }
   $("#purchRows").addEventListener("click", async (e) => {
     const issue = e.target.closest("button[data-issue]");
     const goLic = e.target.closest("button[data-goto-lic]");
@@ -366,13 +414,16 @@
   function renderLicenses() {
     const tb = $("#licRows");
     const q = digits ? ($("#licSearch").value || "").toLowerCase() : "";
-    const rows = LIC_ROWS.filter((l) => !q || (l.tenant_name || "").toLowerCase().includes(q) || (l.tenant_email || "").toLowerCase().includes(q) || (l.license_key || "").toLowerCase().includes(q));
+    const rows = LIC_ROWS.filter((l) => !q || (l.tenant_name || "").toLowerCase().includes(q) || (l.tenant_email || "").toLowerCase().includes(q) || (l.license_key || "").toLowerCase().includes(q) || (l.license_no || "").toLowerCase().includes(q));
     if (!rows.length) { tb.innerHTML = `<tr><td colspan="6" class="muted">Nenhuma licença encontrada.</td></tr>`; return; }
     tb.innerHTML = rows.map((l) => {
       const quota = l.client_quota_override != null ? l.client_quota_override : l.client_quota;
+      const noLine = l.license_no ? `<div class="small muted mono">${esc(l.license_no)} · v${l.version}</div>` : `<div class="small muted mono">v${l.version}</div>`;
+      const free = (l.pricing || "paid") === "free";
+      const priceBadge = free ? ` <span class="tag issued" title="${esc(l.issue_reason || "Cortesia — sem custo")}">Cortesia</span>` : ` <span class="tag active">Paga</span>`;
       return `<tr>
-        <td>${esc(l.tenant_name)}<div class="small muted mono">${esc(l.license_key)}</div></td>
-        <td>${esc(l.plan_name || l.plan_id)}</td>
+        <td>${esc(l.tenant_name)}${noLine}<div class="small muted mono">${esc(l.license_key)}</div></td>
+        <td>${esc(l.plan_name || l.plan_id)}${priceBadge}</td>
         <td>${activeTag(l)} <span class="small muted">${esc(statusLabel(l.status))}</span></td>
         <td>${l.clients_count ?? 0}${quota != null ? " / " + quota : ""}</td>
         <td>${dt(l.valid_until)}</td>
@@ -394,7 +445,8 @@
       <div class="statline">
         <div class="it"><div class="k">Módulo atual</div><div class="v">${esc(l.plan_name || l.plan_id)}</div></div>
         <div class="it"><div class="k">Situação</div><div class="v">${activeTag(l)}</div></div>
-        <div class="it"><div class="k">Licença</div><div class="v">${tag(l.status)} <span class="small muted">v${l.version}</span></div></div>
+        <div class="it"><div class="k">Licença</div><div class="v">${tag(l.status)} <span class="small muted">${l.license_no ? esc(l.license_no) + " · " : ""}v${l.version}</span></div></div>
+        <div class="it"><div class="k">Tipo</div><div class="v">${(l.pricing || "paid") === "free" ? `<span class="tag issued">Cortesia</span>${l.issue_reason ? ` <span class="small muted">${esc(l.issue_reason)}</span>` : ""}` : `<span class="tag active">Paga</span>`}</div></div>
         <div class="it"><div class="k">Clientes</div><div class="v">${l.clients_count ?? 0}${quota != null ? " / " + quota : " / ∞"}</div></div>
         <div class="it"><div class="k">Validade</div><div class="v">${dt(l.valid_until)}</div></div>
       </div>
@@ -927,17 +979,36 @@
     if (["upgraded", "downgraded", "quota_changed", "sent", "support_access"].includes(e)) return "pending";
     return "grace";
   }
+  // Resumo "humano" do dispositivo a partir do user-agent (para a coluna Origem).
+  function deviceLabel(ua) {
+    if (!ua) return "";
+    let os = /Windows/i.test(ua) ? "Windows" : /Macintosh|Mac OS/i.test(ua) ? "macOS" :
+      /Android/i.test(ua) ? "Android" : /iPhone|iPad|iOS/i.test(ua) ? "iOS" : /Linux/i.test(ua) ? "Linux" : "";
+    let br = /Edg\//i.test(ua) ? "Edge" : /OPR\/|Opera/i.test(ua) ? "Opera" : /Chrome/i.test(ua) ? "Chrome" :
+      /Safari/i.test(ua) ? "Safari" : /Firefox/i.test(ua) ? "Firefox" : "";
+    return [br, os].filter(Boolean).join(" · ");
+  }
+  // Coluna Origem: local (cidade/UF/país) + IP + dispositivo.
+  function originCell(ev) {
+    const local = ev.geo_label ? `<div>📍 ${esc(ev.geo_label)}</div>` : "";
+    const ip = ev.ip ? `<div class="muted">IP ${esc(ev.ip)}</div>` : "";
+    const dev = ev.user_agent ? `<div class="muted">${esc(deviceLabel(ev.user_agent))}</div>` : "";
+    const out = local + ip + dev;
+    return out || `<span class="muted">—</span>`;
+  }
+  // Renderiza os últimos 15 registros no painel de Auditoria (rodapé do Painel).
   async function loadAudit() {
     const tb = $("#auditRows");
+    if (!tb) return;
     try {
-      const d = await api("/owner/audit");
-      const rows = d.events || [];
+      const d = await api("/owner/audit?limit=15");
+      const rows = (d.events || []).slice(0, 15);
       if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" class="muted">Sem eventos.</td></tr>`; return; }
       tb.innerHTML = rows.map((ev) => `<tr>
         <td class="small">${dtt(ev.created_at)}</td>
-        <td><span class="tag ${evTag(ev.action)}">${esc(actionLabel(ev.action))}</span></td>
+        <td><span class="tag ${evTag(ev.action)}">${esc(actionLabel(ev.action))}</span><div class="small muted">${esc(ev.kind === "license" ? "licença" : "admin")}</div></td>
         <td class="small">${esc(ev.actor_email || "system")}</td>
-        <td class="small muted">${esc(ev.kind === "license" ? "licença" : "admin")}</td>
+        <td class="small">${originCell(ev)}</td>
         <td class="small muted">${esc(ev.detail || "")}</td>
       </tr>`).join("");
     } catch (e) { tb.innerHTML = `<tr><td colspan="5" style="color:#ff9aa8">${esc(e.message)}</td></tr>`; }

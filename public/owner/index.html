@@ -20,7 +20,6 @@
       <button data-view="crm">CRM</button>
       <button data-view="payments">Financeiro</button>
       <button data-view="support">Suporte<span id="supNavBadge" class="nav-badge" hidden>0</span></button>
-      <button data-view="audit">Auditoria</button>
       <a href="/app/" class="nav-link" style="color:var(--gold2)">Consultoria ↗</a>
       <a href="/tutorial.html" class="nav-link">Tutorial</a>
       <span class="ver" id="verBadge">v—</span>
@@ -77,8 +76,28 @@
     </div>
 
     <div class="card" style="margin-top:16px" data-info="dash_recent">
-      <div class="flex between"><h2>Atividade recente <span class="info-dot" data-info="dash_recent" title="Entenda este bloco">i</span></h2><button class="btn sm ghost" data-goto="audit">Ver auditoria</button></div>
+      <div class="flex between"><h2>Atividade recente <span class="info-dot" data-info="dash_recent" title="Entenda este bloco">i</span></h2><span class="small muted">resumo</span></div>
       <div id="recentBox" class="small muted">Carregando…</div>
+    </div>
+
+    <!-- ============ AUDITORIA (movida para o rodapé do Painel) ============ -->
+    <div class="card" style="margin-top:16px" data-info="sec_audit">
+      <div class="flex between wrap-actions">
+        <h2>Auditoria <span class="info-dot" data-info="sec_audit" title="Entenda este bloco">i</span></h2>
+        <div class="flex" style="gap:8px;align-items:center">
+          <span class="small muted">15 registros mais recentes</span>
+          <button class="btn sm ghost" id="btnAuditReload">Atualizar</button>
+        </div>
+      </div>
+      <p class="muted small" style="margin:2px 0 10px">Trilha imutável com a origem de cada ação (data, ação, responsável, e o <strong>local/dispositivo</strong> de onde partiu). Role para ver os últimos registros.</p>
+      <div id="auditPanel" style="max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:10px">
+        <table style="margin:0">
+          <thead style="position:sticky;top:0;background:var(--card,#fff);z-index:1">
+            <tr><th>Quando</th><th>Ação</th><th>Responsável</th><th>Origem</th><th>Detalhe</th></tr>
+          </thead>
+          <tbody id="auditRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -185,17 +204,6 @@
     </div>
   </section>
 
-  <!-- ============ AUDITORIA ============ -->
-  <section id="view-audit" class="view hide">
-    <h1>Auditoria da área negocial <span class="info-dot" data-info="sec_audit" title="Entenda esta área">i</span></h1>
-    <p class="muted small">Trilha completa e imutável: licenças, suporte, segurança e ações administrativas.</p>
-    <div class="card" style="padding:0;overflow:auto;margin-top:12px">
-      <table>
-        <thead><tr><th>Quando</th><th>Evento</th><th>Por</th><th>Origem</th><th>Detalhe</th></tr></thead>
-        <tbody id="auditRows"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
 
 </main>
 
@@ -219,17 +227,34 @@
       </div>
       <div class="row c2">
         <div class="field"><label>Módulo</label><select id="e_plan"></select></div>
-        <div class="field"><label>Cobrança</label>
+        <div class="field"><label>Tipo de licença</label>
+          <select id="e_pricing">
+            <option value="paid">Paga (com cobrança)</option>
+            <option value="free">Cortesia — avulsa SEM custo</option>
+          </select>
+        </div>
+      </div>
+      <div class="row c2">
+        <div class="field" id="e_billing_wrap"><label>Cobrança</label>
           <select id="e_billing"><option value="monthly">Avulsa (bloqueia no vencimento)</option><option value="recurring">Recorrente (renova automático, -5%)</option></select>
         </div>
+        <div class="field hide" id="e_validdays_wrap"><label>Validade da cortesia (dias)</label>
+          <input id="e_validdays" type="number" min="1" max="3650" placeholder="365">
+        </div>
+      </div>
+      <div class="field hide" id="e_reason_wrap"><label>Motivo da cortesia (controle)</label>
+        <input id="e_reason" placeholder="Ex.: parceria, teste estendido, cliente vitalício, brinde de campanha…">
+        <div class="small muted">Toda licença gerada — paga ou cortesia — recebe nº de controle e fica registrada na auditoria.</div>
       </div>
       <button class="btn gold block" id="btnDoEmit">Gerar licença e link</button>
     </div>
 
     <div id="emitResult" class="hide">
       <div class="card" style="background:rgba(55,178,77,.08);border-color:rgba(55,178,77,.35);margin-bottom:14px">
-        <b style="color:#8fe6a0">✓ Licença emitida.</b> <span class="small muted">Copie e envie ao cliente.</span>
+        <b style="color:#8fe6a0">✓ Licença emitida.</b> <span class="tag" id="r_pricing" style="margin-left:6px"></span> <span class="small muted" id="r_emailed">Copie e envie ao cliente.</span>
       </div>
+      <div id="r_nobox" class="hide"><label>Nº da licença</label>
+        <div class="copybox"><span class="val" id="r_no"></span><button class="btn sm gold" data-copy="r_no">Copiar</button></div></div>
       <label>Link de ativação</label>
       <div class="copybox"><span class="val" id="r_link"></span><button class="btn sm gold" data-copy="r_link">Copiar</button></div>
       <label>Licença de ativação</label>
