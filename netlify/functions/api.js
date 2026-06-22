@@ -100,13 +100,44 @@ async function listPlans() {
   return ok({ plans: rows, gateways: billing.availableGateways() });
 }
 
+// Semente do dono: garante o usuario OWNER (pedrobj@gmail.com) com a senha PADRAO
+// quando ainda nao houver senha definida. Idempotente — so escreve se password_hash
+// for NULL. Usado no 1o login para que o dono nunca fique travado sem acesso.
+async function ensureOwnerDefaultPassword() {
+  const email = (process.env.OWNER_EMAIL || "pedrobj@gmail.com").toLowerCase();
+  const pwd = process.env.DEFAULT_OWNER_PASSWORD || "Mamacita@2030@";
+  const hash = hashPassword(pwd);
+  let u = await one(sql`UPDATE users SET password_hash=${hash}, role='OWNER', active=TRUE,
+                          failed_logins=0, locked_until=NULL
+                        WHERE lower(email)=lower(${email}) AND password_hash IS NULL
+                        RETURNING *`);
+  if (!u) {
+    // Dono ainda nao semeado (migracao recem-rodada): cria com a senha padrao.
+    u = await one(sql`INSERT INTO users (email, name, role, active, password_hash, tenant_id)
+                      VALUES (${email}, 'Pedro (Dono)', 'OWNER', TRUE, ${hash},
+                              '00000000-0000-0000-0000-000000000001')
+                      ON CONFLICT (email) DO NOTHING RETURNING *`);
+    if (!u) u = await one(sql`SELECT * FROM users WHERE lower(email)=lower(${email})`);
+  }
+  if (u) { try { await audit({ tenantId: u.tenant_id, actorEmail: email, action: "owner_seed_default_password" }); } catch {} }
+  return u;
+}
+
 async function login(req) {
   // Config critica ausente => erro claro (e nao "senha invalida", que confunde).
   if (!process.env.JWT_SECRET) {
     return fail("Servidor sem JWT_SECRET configurado. Defina a variavel de ambiente no Netlify e tente de novo.", 500, { code: "SERVER_MISCONFIG" });
   }
   const { email, password } = await readJson(req);
-  const u = await one(sql`SELECT * FROM users WHERE lower(email)=lower(${email || ""})`);
+  let u = await one(sql`SELECT * FROM users WHERE lower(email)=lower(${email || ""})`);
+  // 1o acesso do dono: se o usuario dono ainda nao tem senha definida, aplica a
+  // senha PADRAO (Mamacita@2030@, ou DEFAULT_OWNER_PASSWORD). Idempotente: so age
+  // quando password_hash e NULL — nunca sobrescreve uma senha ja trocada pelo dono.
+  if ((!u || !u.password_hash) &&
+      String(email || "").toLowerCase() === (process.env.OWNER_EMAIL || "pedrobj@gmail.com").toLowerCase()) {
+    try { u = await ensureOwnerDefaultPassword(); }
+    catch (e) { console.warn("[login] seed do dono nao-fatal:", e.message); }
+  }
   // Resposta generica p/ usuario inexistente (nao revela se o e-mail existe).
   if (!u || !u.password_hash) return fail("E-mail ou senha invalidos.", 401);
   // Anti brute-force: conta travada temporariamente.
@@ -595,7 +626,10 @@ async function ownerRoutes(req, user, seg, method) {
     // ENVIO AUTOMATICO: licenca + credenciais/instrucoes de acesso vao direto ao
     // e-mail do comprador (independente do "+ Emitir licenca" avulso). Best-effort:
     // se o e-mail falhar, a emissao continua valida e o link fica disponivel ao dono.
-    let emailedTo = null;
+    // emailStatus reflete o RESULTADO REAL do envio: "sent" (entregue ao provedor),
+    // "queued" (provedor de e-mail NAO configurado — RESEND_API_KEY ausente) ou
+    // "error" (provedor recusou). So marcamos "enviado" quando status==="sent".
+    let emailedTo = null, emailStatus = null;
     if (t?.email) {
       const sent = await safe(sendEmail({
         tenantId: sub.tenant_id, to: t.email,
@@ -603,7 +637,8 @@ async function ownerRoutes(req, user, seg, method) {
         html: licenseEmailHtml({ tenantName: t.name, planName: res.plan?.name, licenseKey: res.license.license_key, licenseNo: res.license.license_no, link: res.link }),
         type: "license_credentials",
       }), null);
-      if (sent) { emailedTo = t.email; await L.markSent(res.license.id, user).catch(() => {}); }
+      emailStatus = sent?.status || "error";
+      if (emailStatus === "sent") { emailedTo = t.email; await L.markSent(res.license.id, user).catch(() => {}); }
     }
     // EMISSAO AUTOMATICA da NFS-e (apos a compra). Best-effort e nao-bloqueante:
     // se a integracao nao estiver configurada/aprovada, a licenca segue valida.
@@ -614,8 +649,8 @@ async function ownerRoutes(req, user, seg, method) {
       else if (nf?.error) nfseAuto = "erro";
       else nfseAuto = nf?.skipped || null;
     } catch (e) { console.error("[nfse:auto:route]", e?.message); }
-    await audit({ tenantId: sub.tenant_id, actorEmail: user.email, action: "license_issued_from_purchase", entity: "license", entityId: res.license.id, detail: { subscriptionId: sub.id, planId: sub.plan_id, license_no: res.license.license_no, emailedTo, nfse: nfseAuto } });
-    return ok({ license: res.license, plan: res.plan, link: res.link, message: res.message, emailedTo, nfse: nfseAuto, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
+    await audit({ tenantId: sub.tenant_id, actorEmail: user.email, action: "license_issued_from_purchase", entity: "license", entityId: res.license.id, detail: { subscriptionId: sub.id, planId: sub.plan_id, license_no: res.license.license_no, emailedTo, emailStatus, nfse: nfseAuto } });
+    return ok({ license: res.license, plan: res.plan, link: res.link, message: res.message, emailedTo, emailStatus, nfse: nfseAuto, whatsapp: t?.phone ? waLink(t.phone, res.message) : null });
   }
 
   // ---- AUDITORIA (trilha completa da area negocial: eventos + audit_log) ----

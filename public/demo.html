@@ -54,7 +54,9 @@
         }
       } catch (e) { /* segue mesmo assim — o ambiente é autossuficiente */ }
     }
-    location.replace("/app/");
+    // ?demo=1 sinaliza entrada de demonstração pública: o ambiente abre como
+    // sandbox sem exigir login (o /app/ exige login real apenas fora da demo).
+    location.replace("/app/?demo=1");
   })();
 })();
 </script>

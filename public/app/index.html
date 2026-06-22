@@ -987,7 +987,7 @@ tbody tr:hover{background:var(--surface-2);}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.60.1";
+const APP_VERSION = "v3.61.0";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2790,6 +2790,11 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.61.0", date:"22/06/2026", tag:"Login obrigatório restaurado: o ambiente de consultoria não entra mais sozinho como demonstração. O acesso é sempre pelo login do dono → Painel → Consultoria (como pedrobj@gmail.com). Ao Sair, é obrigatório logar de novo. Busca de CNPJ liberada na CSP de produção", tagColor:"good", items:[
+    {type:"fix", txt:"🔐 <strong>Tela de login de volta</strong>: abrir o link da plataforma <strong>não entra mais direto</strong> no ambiente de demonstração. Sem uma sessão real (login do dono/assinante), o ambiente <strong>redireciona para a tela de login</strong>. O dono entra pelo <strong>Painel → Consultoria</strong> e passa a operar como <strong>pedrobj@gmail.com</strong> (e não mais como usuário de demonstração)"},
+    {type:"fix", txt:"🚪 <strong>Sair encerra a sessão de verdade</strong>: ao clicar em <strong>Sair</strong>, a sessão do ambiente e a sessão da plataforma são limpas — na próxima vez é <strong>obrigatório fazer login novamente</strong> (nunca “entra direto como salvo”). Para voltar ao Painel sem deslogar, use o botão fixo <strong>Voltar ao Painel</strong>"},
+    {type:"upd", txt:"🔎 <strong>Busca de CNPJ operacional em produção</strong>: a política de segurança (CSP) passou a permitir as bases públicas <strong>BrasilAPI, CNPJá e MinhaReceita</strong>, para que a consulta automática de CNPJ funcione no site publicado"},
+  ]},
   { v:"v3.60.1", date:"21/06/2026", tag:"Indicador de validação do documento fiscal (CNPJ/IVA) ao vivo no onboarding — sinaliza o formato sem nunca impedir o avanço. Busca de CNPJ revalidada nas bases públicas (BrasilAPI + CNPJá + MinhaReceita)", tagColor:"good", items:[
     {type:"fix", txt:"✅ <strong>Validação do documento agora aparece na tela</strong>: ao digitar o <strong>CNPJ</strong> (LGPD) ou o <strong>Número de IVA/VAT</strong> (GDPR) no cadastro, um indicador mostra na hora se o <strong>formato está válido</strong> (✓ verde) ou incompleto (⚠ âmbar). É <strong>apenas informativo — nunca bloqueia</strong> o avanço, conforme o fluxo de cadastro tolerante"},
     {type:"upd", txt:"🔎 <strong>Busca de CNPJ reconfirmada</strong>: as três bases públicas (BrasilAPI, CNPJá e MinhaReceita) respondem por HTTPS com CORS liberado; a plataforma consulta em paralelo e mantém a <strong>situação cadastral mais recente</strong>, preenchendo razão social, nome fantasia, CNAE, município/UF e porte automaticamente"},
@@ -3595,7 +3600,7 @@ function seedDB(){
      (acesso a todos, pois administra a plataforma). Demais perfis só acessam os clientes apontados.
      twofa_*: estado da autenticação de 2 fatores por usuário (segredo TOTP + códigos de recuperação). */
   const mkUser=(name,email,pwd,r,client_ids)=>{ const u={id:nextId("users"),name,email,password:pwd,role:r,active:1,client_ids:Array.isArray(client_ids)?client_ids:[],twofa_enabled:false,twofa_required:false,twofa_secret:null,twofa_pending:null,twofa_recovery:[],twofa_enrolled_at:null,created_at:ts}; db.users.push(u); return u.id; };
-  const admin_id=mkUser("Pedro Junior","admin@pjtech.com.br","admin123","ADMIN");
+  const admin_id=mkUser("Pedro Junior","pedrobj@gmail.com","Mamacita@2030@","ADMIN");
   const dpo_id=mkUser("Ana DPO","dpo@pjtech.com.br","dpo123","DPO");
   const auditor_id=mkUser("Carlos Auditor","auditor@pjtech.com.br","aud123","AUDITOR");
   const colab_id=mkUser("Marina Colab","colab@pjtech.com.br","col123","COLABORADOR");
@@ -8743,7 +8748,16 @@ if(el("twofa-back"))el("twofa-back").onclick=resetTwofaStep;
 if(el("twofa-enroll-form"))el("twofa-enroll-form").onsubmit=doEnroll;
 if(el("enroll-back"))el("enroll-back").onclick=resetTwofaStep;
 if(el("login-pass-toggle"))el("login-pass-toggle").onclick=()=>{ const i=el("login-password"); if(!i)return; const show=i.type==="password"; i.type=show?"text":"password"; el("login-pass-toggle").textContent=show?"🙈":"👁"; el("login-pass-toggle").setAttribute("aria-label",show?"Ocultar senha":"Mostrar senha"); try{ i.focus(); }catch(e){} };
-el("logout-btn").onclick=()=>{ logout(); location.hash=""; try{ var __s=JSON.parse(localStorage.getItem("dpo_user")||"null"); location.href=(__s&&__s.role==="OWNER")?"/painel":"/"; }catch(_){ location.href="/"; } };
+el("logout-btn").onclick=()=>{
+  /* SAIR DO SISTEMA = logout completo. Encerra a sessao do ambiente E a sessao
+     SaaS (dono/assinante), para que na proxima vez seja OBRIGATORIO logar de novo
+     (nunca "entra direto como salvo"). Para voltar ao Painel sem deslogar existe o
+     botao fixo "Voltar ao Painel". */
+  try{ logout(); }catch(_){}
+  location.hash="";
+  try{ localStorage.removeItem("dpo_token"); localStorage.removeItem("dpo_user"); localStorage.removeItem("dpo_saas"); }catch(_){}
+  location.replace("/");
+};
 const bb=el("back-btn"); if(bb)bb.onclick=goBack;
 const fwb=el("fwd-btn"); if(fwb)fwb.onclick=goForward;
 const mb=el("menu-btn"); if(mb)mb.onclick=toggleSidebar;
@@ -8772,20 +8786,40 @@ window.addEventListener("hashchange",handleHash);
    a partir da sessão SaaS quando existir. É seguro: o ambiente é um sandbox por
    navegador (localStorage). Páginas públicas (#/portal, #/acompanhamento, ...) NÃO
    são afetadas — handleHash() trata o hash público antes de entrar no app. */
-(function autoEnterConsultoria(){
+(function enterConsultoria(){
   try{
-    if(!(App.token && App.user)){
-      var pick=function(f){ try{ return (DB&&DB.users||[]).find(f); }catch(_){ return null; } };
-      var admin = pick(function(u){return u&&u.role==="ADMIN"&&u.active;}) || pick(function(u){return u&&u.active;});
-      if(admin){
-        /* Herda a identidade real da sessão SaaS: o dono entra como pedrobj@gmail.com
-           (e não como o admin@pjtech.com.br do seed, que permanece apenas para o
-           link de demonstração quando NÃO há sessão SaaS real). */
-        try{ var __raw=localStorage.getItem("dpo_user"); if(__raw){ var __s=JSON.parse(__raw); if(__s){ if(__s.name) admin.name=__s.name; if(__s.email) admin.email=__s.email; } } }catch(_){}
-        var s=issueSession(admin);
-        App.token=s.token; App.user=s.user;
-        try{ sessionStorage.setItem("token",s.token); sessionStorage.setItem("user",JSON.stringify(s.user)); }catch(_){}
-      }
+    if(App.token && App.user) return; /* ja ha sessao no ambiente */
+
+    var params=new URLSearchParams(location.search);
+    var supportTok=(params.get("support")||"").trim();
+    var isDemo=(params.get("demo")||"")==="1";
+    /* Paginas publicas (#/portal, #/acompanhamento, ...) sao tratadas por handleHash;
+       nunca exigem login nem redirecionam. */
+    var isPublicRoute=/^#\/(portal|acompanhamento|politica|selo|treinamento|mapeamento|certificado)\//.test(location.hash||"");
+    if(isPublicRoute) return;
+
+    /* Identidade real vinda da plataforma (login de backend em "/"). */
+    var saas=null; try{ saas=JSON.parse(localStorage.getItem("dpo_user")||"null"); }catch(_){}
+    var saasToken=localStorage.getItem("dpo_token")||"";
+    var hasSaasSession=!!(saas && saasToken);
+
+    /* SEM sessao real, SEM modo suporte e SEM demonstracao => EXIGE LOGIN:
+       volta para a tela de login da plataforma. Nada de auto-entrada como demo. */
+    if(!hasSaasSession && !supportTok && !isDemo){
+      try{ location.replace("/"); }catch(_){ location.href="/"; }
+      return;
+    }
+
+    /* Ha sessao real (dono/assinante), modo suporte ou demonstracao publica:
+       entra no ambiente herdando a identidade real quando existir. O dono entra
+       como pedrobj@gmail.com (e nao como o ADMIN do seed). */
+    var pick=function(f){ try{ return (DB&&DB.users||[]).find(f); }catch(_){ return null; } };
+    var admin = pick(function(u){return u&&u.role==="ADMIN"&&u.active;}) || pick(function(u){return u&&u.active;});
+    if(admin){
+      if(saas){ if(saas.name) admin.name=saas.name; if(saas.email) admin.email=saas.email; }
+      var s=issueSession(admin);
+      App.token=s.token; App.user=s.user;
+      try{ sessionStorage.setItem("token",s.token); sessionStorage.setItem("user",JSON.stringify(s.user)); }catch(_){}
     }
   }catch(e){}
 })();

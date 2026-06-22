@@ -342,9 +342,21 @@
       pb.style.marginLeft = "6px";
     }
     // Confirmação de envio automático ao comprador (quando emitido pela aba Compras).
+    // Reflete o status REAL do e-mail: enviado, provedor não configurado, ou erro.
     const em = $("#r_emailed");
-    if (r.emailedTo) em.textContent = `Licença + credenciais enviadas automaticamente para ${r.emailedTo}.`;
-    else em.textContent = "Copie e envie ao cliente.";
+    if (r.emailedTo) {
+      em.textContent = `Licença + credenciais enviadas automaticamente para ${r.emailedTo}.`;
+      em.style.color = "";
+    } else if (r.emailStatus === "queued") {
+      em.textContent = "E-mail automático não configurado (defina RESEND_API_KEY no Netlify). Copie o link e a chave abaixo e envie ao cliente.";
+      em.style.color = "#e6b800";
+    } else if (r.emailStatus === "error") {
+      em.textContent = "Falha no envio automático do e-mail. Copie o link e a chave abaixo e envie ao cliente.";
+      em.style.color = "#ff9aa8";
+    } else {
+      em.textContent = "Copie e envie ao cliente.";
+      em.style.color = "";
+    }
     const wa = $("#r_wa");
     if (r.whatsapp) { wa.href = r.whatsapp; wa.classList.remove("hide"); } else wa.classList.add("hide");
     $("#emitForm").classList.add("hide");
