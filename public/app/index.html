@@ -987,7 +987,7 @@ tbody tr:hover{background:var(--surface-2);}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.63.2";
+const APP_VERSION = "v3.63.3";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2790,6 +2790,11 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.63.3", date:"22/06/2026", tag:"Suporte por cliente atendido: ao abrir um chamado você diz se é sobre a própria consultoria ou sobre um cliente específico (empresa). Cada cliente ganhou o item “🛟 Suporte do cliente” no menu, com os chamados daquele cliente agrupados. O chamado chega ao suporte já identificado (consultoria + empresa-cliente com CNPJ). Botão “Estágio anterior” renomeado para “Voltar”", tagColor:"good", items:[
+    {type:"add", txt:"🏢 <strong>Origem do chamado identificada</strong>: no formulário de suporte há o campo <strong>“Este chamado é sobre”</strong> — escolha entre <strong>a própria consultoria (assunto geral/plataforma)</strong> ou <strong>um cliente atendido</strong> (empresa). Quando é sobre um cliente, o chamado chega ao suporte <strong>já identificado</strong>: aparece a <strong>consultoria de origem</strong> e a <strong>empresa-cliente (nome + CNPJ)</strong> a que o problema se refere"},
+    {type:"add", txt:"🛟 <strong>Suporte dentro de cada cliente</strong>: ao abrir um cliente, o menu lateral ganha o item <strong>“Suporte do cliente”</strong>. Por ali todo chamado já sai <strong>amarrado àquele cliente</strong> (sem escolher na lista) e você vê só os <strong>chamados daquele cliente</strong> — a conversa fica agrupada por empresa"},
+    {type:"upd", txt:"↩ <strong>Botão renomeado</strong>: na área de novas licenças, o botão <strong>“Estágio anterior”</strong> passou a se chamar <strong>“Voltar”</strong> (mesma cor e posição)"},
+  ]},
   { v:"v3.63.2", date:"22/06/2026", tag:"Suporte com conversa completa: ao responder um chamado agora dá para escrever a mensagem, anexar um arquivo (até 2 MB) e baixar os anexos enviados — nos dois sentidos, você e o suporte. O dono responde com mudança de status, descrição e anexo", tagColor:"good", items:[
     {type:"add", txt:"💬 <strong>Conversa com anexos no suporte</strong>: cada resposta do chamado pode levar um <strong>anexo próprio</strong> (imagem, PDF, documento, planilha ou texto, até <strong>2 MB</strong>), além do texto. Os anexos enviados por você e pelo suporte aparecem com botão <strong>📎 Baixar</strong> direto na conversa. Vale para o <strong>assinante</strong> e para o <strong>suporte (Painel do dono)</strong> — fluxo completo de ida e volta"},
     {type:"upd", txt:"📎 <strong>Anexo na resposta</strong>: novo campo de anexo no formulário de resposta do chamado, com o mesmo limite de 2 MB do envio inicial"},
@@ -5225,6 +5230,7 @@ const CLIENT_NAV=[
   {group:"Adequação",items:[{id:"assistente",label:"Assistente de adequação",ico:"🧭"},{id:"comite",label:"Comitê de Privacidade",ico:"👥"},{id:"mapeamento",label:"Mapeamento de Dados",ico:"🗺"},{id:"cookies",label:"Consentimento de Cookies",ico:"🍪"},{id:"treinamentos",label:"Treinamentos & Certificação",ico:"🎓"},{id:"acompanhamento",label:"Kanban de acompanhamento",ico:"▦"}]},
   {group:"Conformidade",items:[{id:"seguranca",label:"Segurança (ISO 27001)",ico:"🛡"},{id:"fiscalizacao",label:"Fiscalização ANPD",ico:"⚖"},{id:"auditoria-cliente",label:"Auditoria & Riscos",ico:"≣"},{id:"trilha",label:"Trilha de Auditoria",ico:"🧾"}]},
   {group:"Canais públicos",items:[{id:"canal-titular",label:"Canal do Titular",ico:"🧑‍⚖️"},{id:"inbox",label:"Caixa de entrada",ico:"✉"},{id:"publicos",label:"Links públicos",ico:"🔗"}]},
+  {group:"Suporte",items:[{id:"suporte-cliente",label:"Suporte do cliente",ico:"🛟"}]},
   {group:"Conhecimento",items:[{id:"tutorial-cliente",label:"Tutorial de adequação",ico:"📚"}]},
 ];
 function currentNav(){ return App.clientId?CLIENT_NAV:GLOBAL_NAV; }
@@ -5362,34 +5368,58 @@ function supFileToB64(file){
 }
 function supStatusBadge(s){ return badge(SUP_STATUS_LABEL[s]||s,SUP_STATUS_CLS[s]||"b-gray"); }
 function supPrioBadge(p){ return badge("Prioridade: "+(SUP_PRIO_LABEL[p]||p),SUP_PRIO_CLS[p]||"b-gray"); }
-VIEWS["suporte"]=async()=>{
+/* Visao de suporte unica para os dois contextos: GLOBAL (assuntos da consultoria/
+   plataforma) e POR CLIENTE (problema de um cliente especifico atendido pela
+   consultoria — a origem ja chega identificada ao dono e as respostas ficam
+   agrupadas por cliente). scope=null => global; scope={id,name,cnpj} => cliente. */
+let SUP_LIST_VIEW="suporte";
+function supClientOptions(selId){
+  const list=scopedClientList(DB.clients||[]).slice().sort((a,b)=>(a.trade_name||a.name||"").localeCompare(b.trade_name||b.name||""));
+  const opts=[`<option value=""${!selId?" selected":""}>Minha consultoria (assunto geral / plataforma)</option>`];
+  list.forEach(c=>{ const nm=c.trade_name||c.name||("Cliente #"+c.id); opts.push(`<option value="${esc(c.id)}"${String(selId)===String(c.id)?" selected":""}>${esc(nm)}${c.cnpj?(" · "+esc(c.cnpj)):""}</option>`); });
+  return opts.join("");
+}
+function supOriginTag(t){
+  if(t.origin==="cliente"&&(t.client_name||t.client_ref)) return `<span class="badge b-purple">🏢 ${esc(t.client_name||("Cliente "+t.client_ref))}</span>`;
+  return `<span class="badge b-gray">Consultoria (geral)</span>`;
+}
+VIEWS["suporte"]=async()=>renderSupportView(null);
+VIEWS["suporte-cliente"]=async()=>{ if(!ensureClient())return; const c=DB.clients.find(x=>x.id===cid()); return renderSupportView(c?{id:String(c.id),name:c.trade_name||c.name,cnpj:c.cnpj||""}:null); };
+async function renderSupportView(scope){
+  SUP_LIST_VIEW = scope ? "suporte-cliente" : "suporte";
   loading();
   let data;
-  try{ data=await supApi(""); }
+  try{ data=await supApi(scope?("?client_ref="+encodeURIComponent(scope.id)):""); }
   catch(e){
     el("content").innerHTML=`<div class="card"><h3>🛟 Suporte</h3>
       <div class="info-box" style="background:#fff5f5;border-color:#fecaca;margin-top:10px">${esc(e.message||"Não foi possível carregar o suporte.")}</div>
       <button class="btn ghost" id="sup-retry" style="margin-top:12px">Tentar novamente</button></div>`;
-    var rb=el("sup-retry"); if(rb)rb.onclick=()=>go("suporte"); return;
+    var rb=el("sup-retry"); if(rb)rb.onclick=()=>go(SUP_LIST_VIEW); return;
   }
   const tickets=Array.isArray(data.tickets)?data.tickets:[];
   const catOptions=Object.keys(SUP_CAT_LABEL).map(id=>`<option value="${id}">${esc(SUP_CAT_LABEL[id])}</option>`).join("");
   const prioOptions=Object.keys(SUP_PRIO_LABEL).map(id=>`<option value="${id}"${id==="normal"?" selected":""}>${esc(SUP_PRIO_LABEL[id])}</option>`).join("");
   const myName=(App.user&&App.user.name)||"";
   const open=tickets.filter(t=>t.status!=="fechado"&&t.status!=="resolvido").length;
+  // Campo de identificação de origem (sobre qual cliente é o chamado).
+  const scopeField = scope
+    ? `<div class="info-box" style="grid-column:1/-1;margin:0">Este chamado será registrado para o cliente <strong>🏢 ${esc(scope.name)}</strong>${scope.cnpj?` · ${esc(scope.cnpj)}`:""}. O suporte do DPO PJ saberá exatamente de qual empresa se trata.</div>`
+    : `<div class="field" style="grid-column:1/-1"><label>Este chamado é sobre</label><select id="sup-client">${supClientOptions(null)}</select><span class="muted" style="font-size:11px">Escolha um cliente atendido quando o problema for de uma empresa específica — o suporte recebe a origem identificada.</span></div>`;
   const listHtml=tickets.length?tickets.map(t=>`
     <div class="card sup-row" data-tid="${esc(t.id)}" style="cursor:pointer;margin:0 0 10px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
       <div style="min-width:0;flex:1">
         <div style="font-weight:700">#${esc(t.ticket_no)} · ${esc(t.subject)}</div>
+        <div style="margin-top:4px">${scope?"":supOriginTag(t)}</div>
         <div class="muted" style="font-size:12px;margin-top:3px">${esc(supCatLabel(t.category))} · aberto em ${esc(supDateTime(t.created_at))}${t.attachment_name?" · 📎 anexo":""} · ${esc(t.msg_count||0)} mensagem(ns)</div>
       </div>
       <div style="text-align:right;white-space:nowrap">${supStatusBadge(t.status)} ${supPrioBadge(t.priority)}<br><button class="btn sm" style="margin-top:8px" data-open="${esc(t.id)}">Ver / responder →</button></div>
-    </div>`).join(""):`<div class="info-box">Você ainda não abriu nenhum chamado. Use o formulário acima para falar com o suporte.</div>`;
+    </div>`).join(""):`<div class="info-box">${scope?"Nenhum chamado aberto para este cliente ainda. Use o formulário acima para falar com o suporte.":"Você ainda não abriu nenhum chamado. Use o formulário acima para falar com o suporte."}</div>`;
   el("content").innerHTML=`
     <div class="card" style="margin-bottom:16px">
-      <h3 style="margin-top:0">🛟 Abrir um chamado de suporte</h3>
+      <h3 style="margin-top:0">🛟 Abrir um chamado de suporte${scope?` — <span style="color:#7c3aed">${esc(scope.name)}</span>`:""}</h3>
       <p class="muted" style="margin-top:-4px">Fale diretamente com a equipe do DPO PJ Protection. Geramos um número de protocolo e respondemos por aqui e por e-mail.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        ${scopeField}
         <div class="field"><label>Seu nome</label><input type="text" id="sup-name" value="${esc(myName)}" placeholder="Como devemos te chamar"></div>
         <div class="field"><label>Provável problema</label><select id="sup-cat">${catOptions}</select></div>
         <div class="field"><label>Assunto</label><input type="text" id="sup-subject" placeholder="Resumo do chamado" maxlength="160"></div>
@@ -5400,7 +5430,7 @@ VIEWS["suporte"]=async()=>{
       <button class="btn" id="sup-send">Abrir chamado</button>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin:0 2px 10px">
-      <h3 style="margin:0">Meus chamados</h3>
+      <h3 style="margin:0">${scope?"Chamados deste cliente":"Meus chamados"}</h3>
       <span class="muted" style="font-size:12px">${tickets.length} no total · ${open} em aberto</span>
     </div>
     ${listHtml}`;
@@ -5410,26 +5440,30 @@ VIEWS["suporte"]=async()=>{
     const description=(el("sup-desc").value||"").trim();
     if(!subject)return toast("Informe um assunto para o chamado.",true);
     if(!description)return toast("Descreva o problema.",true);
+    // Origem do chamado (consultoria x cliente atendido).
+    let origin="consultoria", client_ref=null, client_name=null, client_cnpj=null;
+    if(scope){ origin="cliente"; client_ref=scope.id; client_name=scope.name; client_cnpj=scope.cnpj||null; }
+    else { const sc=el("sup-client"); const v=sc?sc.value:""; if(v){ const c=DB.clients.find(x=>String(x.id)===String(v)); if(c){ origin="cliente"; client_ref=String(c.id); client_name=c.trade_name||c.name; client_cnpj=c.cnpj||null; } } }
     const btn=el("sup-send"); btn.disabled=true; const old=btn.textContent; btn.textContent="Enviando…";
     try{
       let attachment=null; const f=el("sup-file").files&&el("sup-file").files[0];
       if(f){ if(f.size>2*1024*1024){ btn.disabled=false; btn.textContent=old; return toast("Anexo acima de 2 MB. Escolha um arquivo menor.",true); }
         attachment={name:f.name,type:f.type||"application/octet-stream",data:await supFileToB64(f)}; }
-      const body=JSON.stringify({name:(el("sup-name").value||"").trim(),category:el("sup-cat").value,priority:el("sup-prio").value,subject,description,attachment});
+      const body=JSON.stringify({name:(el("sup-name").value||"").trim(),category:el("sup-cat").value,priority:el("sup-prio").value,subject,description,attachment,origin,client_ref,client_name,client_cnpj});
       const res=await supApi("",{method:"POST",body});
       toast("Chamado #"+res.ticketNo+" aberto! Nossa equipe foi notificada.");
-      go("suporte");
+      go(SUP_LIST_VIEW);
     }catch(e){ btn.disabled=false; btn.textContent=old; toast(e.message||"Não foi possível abrir o chamado.",true); }
   };
   // Abrir detalhe
   el("content").querySelectorAll("[data-open]").forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); supOpenTicket(b.getAttribute("data-open")); });
   el("content").querySelectorAll(".sup-row").forEach(r=>r.onclick=()=>supOpenTicket(r.getAttribute("data-tid")));
-};
+}
 async function supOpenTicket(id){
   loading();
   let d;
   try{ d=await supApi("/"+encodeURIComponent(id)); }
-  catch(e){ toast(e.message||"Chamado não encontrado.",true); return go("suporte"); }
+  catch(e){ toast(e.message||"Chamado não encontrado.",true); return go(SUP_LIST_VIEW); }
   const t=d.ticket||{}; const msgs=Array.isArray(d.messages)?d.messages:[];
   const thread=msgs.map(m=>{
     const mine=m.author_role==="cliente";
@@ -5442,14 +5476,18 @@ async function supOpenTicket(id){
       </div></div>`;
   }).join("");
   const closed=t.status==="fechado";
+  const originLine=t.origin==="cliente"&&(t.client_name||t.client_ref)
+    ? `<div class="info-box" style="margin-top:10px">🏢 Chamado sobre o cliente <strong>${esc(t.client_name||("#"+t.client_ref))}</strong>${t.client_cnpj?` · ${esc(t.client_cnpj)}`:""}</div>`
+    : "";
   el("content").innerHTML=`
-    <button class="btn ghost sm" id="sup-back" style="margin-bottom:12px">← Voltar aos meus chamados</button>
+    <button class="btn ghost sm" id="sup-back" style="margin-bottom:12px">← Voltar aos chamados</button>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
         <div><h3 style="margin:0">#${esc(t.ticket_no)} · ${esc(t.subject)}</h3>
           <div class="muted" style="font-size:12px;margin-top:4px">${esc(supCatLabel(t.category))} · aberto em ${esc(supDateTime(t.created_at))}</div></div>
         <div style="text-align:right">${supStatusBadge(t.status)} ${supPrioBadge(t.priority)}</div>
       </div>
+      ${originLine}
       ${t.has_attachment?`<div class="info-box" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span>📎 Anexo enviado: <strong>${esc(t.attachment_name||"arquivo")}</strong></span><button class="btn sm ghost" id="sup-tatt">Baixar</button></div>`:""}
     </div>
     <div class="card">
@@ -5460,7 +5498,7 @@ async function supOpenTicket(id){
       <div class="field"><label>Anexo (opcional · até 2 MB)</label><input type="file" id="sup-reply-file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.log"></div>
       <button class="btn" id="sup-reply-send">Enviar resposta</button>`}
     </div>`;
-  el("sup-back").onclick=()=>go("suporte");
+  el("sup-back").onclick=()=>go(SUP_LIST_VIEW);
   const th=el("sup-thread"); if(th)th.scrollTop=th.scrollHeight;
   // Baixar anexo (data-URL) — helper compartilhado p/ chamado e mensagens.
   const supDownload=(a)=>{ const link=document.createElement("a"); link.href="data:"+(a.type||"application/octet-stream")+";base64,"+a.data; link.download=a.name||"anexo"; document.body.appendChild(link); link.click(); link.remove(); };
@@ -8975,7 +9013,7 @@ function showDemoExpired(){
     var back=document.createElement("button"); back.type="button"; back.id="saas-owner-step-back";
     back.title="Voltar ao estagio anterior";
     back.setAttribute("style",common+" rgba(212,160,23,.55);background:linear-gradient(135deg,#cf9b01,#e9c46a);color:#1a1205");
-    back.innerHTML="↩ Estágio anterior";
+    back.innerHTML="↩ Voltar";
     back.onclick=function(){ try{ goBack(); }catch(e){} };
     back.onmouseover=function(){ back.style.filter="brightness(1.07)"; };
     back.onmouseout=function(){ back.style.filter=""; };

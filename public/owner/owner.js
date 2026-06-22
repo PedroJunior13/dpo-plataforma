@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.8.2";
+  const PLATFORM_VERSION = "2.8.3";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -897,16 +897,21 @@
         const flag = need
           ? ` <span class="sup-pill-new">● Novo / responder</span>`
           : (t.status === "aguardando_cliente" ? ` <span class="sup-pill-wait">aguardando cliente</span>` : "");
+        // Identificação de ORIGEM: consultoria (licença) + cliente atendido (se houver).
+        const origin = t.origin === "cliente" && (t.client_name || t.client_ref)
+          ? `<div class="small" style="color:#c9a227">🏢 Cliente: ${esc(t.client_name || t.client_ref)}${t.client_cnpj ? ` · ${esc(t.client_cnpj)}` : ""}</div>`
+          : `<div class="small muted">Assunto da consultoria</div>`;
         return `<tr class="${need ? "sup-need" : ""}">
           <td><b>#${esc(t.ticket_no)}</b></td>
           <td class="small">${dtt(t.created_at)}</td>
           <td>${slaPill(sla)}</td>
-          <td class="small">${esc(t.opener_name || t.opener_email || "—")}</td>
+          <td class="small">${esc(t.opener_name || t.opener_email || "—")}
+            <div class="small muted">${esc(t.tenant_name || "Consultoria")}</div>${origin}</td>
           <td>${esc(t.subject)}${t.has_attachment ? ' <span title="tem anexo">📎</span>' : ""}${flag}</td>
           <td class="small muted">${esc(supCat(t.category))}</td>
           <td><span class="tag ${SUP_PR_TAG[t.priority] || "grace"}">${esc(SUP_PR[t.priority] || t.priority)}</span></td>
           <td><span class="tag ${SUP_ST_TAG[t.status] || "grace"}">${esc(SUP_ST[t.status] || t.status)}</span></td>
-          <td style="text-align:right"><button class="btn sm gold" data-tk="${esc(t.id)}">Abrir</button></td>
+          <td style="text-align:right"><button class="btn sm gold" data-tk="${esc(t.id)}">Abrir / responder</button></td>
         </tr>`;
       }).join("");
     } catch (e) { tb.innerHTML = `<tr><td colspan="9" style="color:#ff9aa8">${esc(e.message)}</td></tr>`; }
@@ -949,6 +954,11 @@
         <div class="card" style="margin:0">
           <div class="small muted">Solicitante</div><div><b>${esc(t.opener_name || "—")}</b></div>
           <div class="small">${esc(t.opener_email || "—")}</div>
+          <div class="small muted" style="margin-top:6px">Consultoria (licença)</div><div class="small">${esc(t.tenant_name || "—")}</div>
+          <div class="small muted" style="margin-top:6px">Origem do chamado</div>
+          <div class="small">${t.origin === "cliente" && (t.client_name || t.client_ref)
+            ? `<span style="color:#c9a227">🏢 Cliente: <b>${esc(t.client_name || t.client_ref)}</b></span>${t.client_cnpj ? `<br><span class="muted">CNPJ ${esc(t.client_cnpj)}</span>` : ""}`
+            : "Assunto da própria consultoria / plataforma"}</div>
           <div class="small muted" style="margin-top:6px">Categoria</div><div class="small">${esc(supCat(t.category))}</div>
         </div>
         <div class="card" style="margin:0">

@@ -429,15 +429,30 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   attachment_name TEXT,
   attachment_type TEXT,
   attachment_data TEXT,                  -- base64 (anexo pequeno; cap no app)
+  -- Identificacao de ORIGEM do chamado: 'consultoria' (assunto da propria licenca/
+  -- plataforma) ou 'cliente' (problema de um cliente especifico atendido pela
+  -- consultoria). Os campos client_* sao SNAPSHOT em texto (os clientes vivem no
+  -- app local, nao ha FK), garantindo que o dono saiba exatamente de onde vem cada
+  -- chamado e que o fluxo de respostas fique agrupado por cliente.
+  origin          TEXT NOT NULL DEFAULT 'consultoria',
+  client_ref      TEXT,                  -- id opaco do cliente no app (agrupa respostas)
+  client_name     TEXT,                  -- snapshot do nome do cliente
+  client_cnpj     TEXT,                  -- snapshot do CNPJ do cliente
   first_response_at TIMESTAMPTZ,         -- 1a resposta do suporte (para SLA)
   resolved_at     TIMESTAMPTZ,
   last_actor      TEXT,                  -- 'cliente' | 'suporte' (quem falou por ultimo)
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Bancos ja existentes: garante as colunas de identificacao de origem (idempotente).
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS origin      TEXT NOT NULL DEFAULT 'consultoria';
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_ref  TEXT;
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_name TEXT;
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_cnpj TEXT;
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status  ON support_tickets(status);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant  ON support_tickets(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_created ON support_tickets(created_at);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_client  ON support_tickets(client_ref);
 
 -- Conversa do chamado (cliente <-> suporte).
 CREATE TABLE IF NOT EXISTS support_ticket_messages (

@@ -1027,15 +1027,16 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     const url = new URL(req.url);
     const status = url.searchParams.get("status");
     const open = url.searchParams.get("open"); // "1" => somente em andamento
+    // tenant_name = nome da consultoria (licenca) que abriu — identificacao de origem.
     const rows = await safe(
       status
-        ? sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
-               FROM support_tickets t WHERE t.status=${status} ORDER BY t.created_at ASC LIMIT 500`
+        ? sql`SELECT t.*, tn.name AS tenant_name, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+               FROM support_tickets t LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.status=${status} ORDER BY t.created_at ASC LIMIT 500`
         : open === "1"
-          ? sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
-                 FROM support_tickets t WHERE t.status IN ('aberto','em_andamento','aguardando_cliente') ORDER BY t.created_at ASC LIMIT 500`
-          : sql`SELECT t.*, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
-                 FROM support_tickets t ORDER BY t.created_at ASC LIMIT 500`,
+          ? sql`SELECT t.*, tn.name AS tenant_name, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+                 FROM support_tickets t LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.status IN ('aberto','em_andamento','aguardando_cliente') ORDER BY t.created_at ASC LIMIT 500`
+          : sql`SELECT t.*, tn.name AS tenant_name, (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=t.id) AS msg_count
+                 FROM support_tickets t LEFT JOIN tenants tn ON tn.id=t.tenant_id ORDER BY t.created_at ASC LIMIT 500`,
       []);
     // Nao devolve o base64 do anexo na listagem (peso); so a flag de existencia.
     const tickets = (rows || []).map(t => ({ ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }));
@@ -1044,7 +1045,8 @@ async function ownerSupportRoutes(req, user, sseg, method) {
 
   // ---- DETALHE do chamado + conversa ----
   if (head === "tickets" && sseg[1] && !sseg[2] && method === "GET") {
-    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${sseg[1]}`);
+    const t = await one(sql`SELECT t.*, tn.name AS tenant_name
+      FROM support_tickets t LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.id=${sseg[1]}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
     return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages: messages.map(stripMsgAttachment) });
@@ -1127,12 +1129,21 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     return ok({ categories: TICKET_CATEGORIES, priorities: TICKET_PRIORITIES });
   }
 
-  // Lista dos chamados do proprio tenant.
+  // Lista dos chamados do proprio tenant. Filtro opcional ?client_ref= para a
+  // visao de suporte DENTRO de um cliente especifico (fluxo agrupado por cliente).
   if (!head && method === "GET") {
-    const rows = await safe(sql`SELECT id, ticket_no, category, subject, priority, status, last_actor,
-        attachment_name, created_at, updated_at,
-        (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=support_tickets.id) AS msg_count
-      FROM support_tickets WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 200`, []);
+    const clientRef = new URL(req.url).searchParams.get("client_ref");
+    const rows = await safe(
+      clientRef
+        ? sql`SELECT id, ticket_no, category, subject, priority, status, last_actor,
+              attachment_name, origin, client_ref, client_name, client_cnpj, created_at, updated_at,
+              (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=support_tickets.id) AS msg_count
+            FROM support_tickets WHERE tenant_id=${tenant.id} AND client_ref=${clientRef} ORDER BY created_at DESC LIMIT 200`
+        : sql`SELECT id, ticket_no, category, subject, priority, status, last_actor,
+              attachment_name, origin, client_ref, client_name, client_cnpj, created_at, updated_at,
+              (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=support_tickets.id) AS msg_count
+            FROM support_tickets WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 200`,
+      []);
     return ok({ tickets: rows, categories: TICKET_CATEGORIES });
   }
 
@@ -1147,16 +1158,24 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const priority = TICKET_PRIORITIES.includes(b.priority) ? b.priority : "normal";
     const openerName = String(b.name || user.name || "").slice(0, 160) || (user.email || "");
     const openerEmail = String(b.email || user.email || "").slice(0, 180) || null;
+    // Origem do chamado: 'cliente' => problema de um cliente especifico atendido
+    // pela consultoria; 'consultoria' => assunto da propria licenca/plataforma.
+    const origin = b.origin === "cliente" ? "cliente" : "consultoria";
+    const clientRef  = origin === "cliente" ? (String(b.client_ref  || "").slice(0, 80)  || null) : null;
+    const clientName = origin === "cliente" ? (String(b.client_name || "").slice(0, 180) || null) : null;
+    const clientCnpj = origin === "cliente" ? (String(b.client_cnpj || "").slice(0, 32)  || null) : null;
     const att = sanitizeAttachment(b.attachment);
     const t = await one(sql`INSERT INTO support_tickets
       (tenant_id, opener_email, opener_name, category, subject, description, priority, status,
-       attachment_name, attachment_type, attachment_data, last_actor)
+       attachment_name, attachment_type, attachment_data, last_actor,
+       origin, client_ref, client_name, client_cnpj)
       VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${description}, ${priority},
-        'aberto', ${att?.name || null}, ${att?.type || null}, ${att?.data || null}, 'cliente') RETURNING *`);
+        'aberto', ${att?.name || null}, ${att?.type || null}, ${att?.data || null}, 'cliente',
+        ${origin}, ${clientRef}, ${clientName}, ${clientCnpj}) RETURNING *`);
     await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
       VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${description})`;
     await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
-      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority } });
+      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority, origin, client: clientName || null } });
     // Notifica o suporte (dono). O envio do e-mail e BEST-EFFORT: usamos safe()
     // para que uma falha/lentidao do provedor (Resend) jamais derrube a abertura
     // do chamado — o protocolo ja foi gravado e deve ser sempre devolvido.
@@ -1167,7 +1186,8 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
         type: "support",
         html: `<p><b>Novo chamado #${t.ticket_no}</b> (${escapeHtml(ticketCategoryLabel(category))}, prioridade ${escapeHtml(priority)})</p>
           <p><b>De:</b> ${escapeHtml(openerName)} &lt;${escapeHtml(openerEmail || "")}&gt;<br>
-             <b>Ambiente:</b> ${escapeHtml(tenant.name || tenant.id)}</p>
+             <b>Consultoria (licença):</b> ${escapeHtml(tenant.name || tenant.id)}<br>
+             <b>Origem:</b> ${origin === "cliente" ? `Cliente atendido — <b>${escapeHtml(clientName || "—")}</b>${clientCnpj ? ` (CNPJ ${escapeHtml(clientCnpj)})` : ""}` : "Assunto da própria consultoria / plataforma"}</p>
           <p><b>Assunto:</b> ${escapeHtml(subject)}</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(description).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)}</p>` : ""}
