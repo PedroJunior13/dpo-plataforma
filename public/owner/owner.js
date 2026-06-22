@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.6.0";
+  const PLATFORM_VERSION = "2.7.0";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -83,6 +83,21 @@
     dash_modules: { t: "Distribuição por módulo & integrações", b: "Quantos assinantes e quanta receita cada módulo gera, além do status das integrações de pagamento e de NFS-e.", goto: "licenses", gl: "Ver Licenças" },
     dash_overdue: { t: "Vencimentos & atrasos", b: "Clientes vencendo nos próximos 7 dias ou já atrasados. Use o botão “Cobrar” para abrir o WhatsApp com a mensagem pronta. Bloqueios por inadimplência são automáticos.", goto: "licenses", gl: "Ver Licenças" },
     dash_recent: { t: "Atividade recente", b: "Últimos eventos do sistema. O registro completo e imutável fica na aba Auditoria.", goto: "audit", gl: "Ver Auditoria" },
+    // --- CRM (4 cartões do topo) ---
+    crm_contacts: { t: "Contatos", b: "Total de pessoas/empresas no seu funil — somando todos os estágios (lead, contato, proposta, ganho, perdido e cliente). É a sua base de relacionamento. Cadastre novos contatos pelo botão “Novo contato” e arraste/clique nos cartões do funil para movê-los de estágio." },
+    crm_clients: { t: "Clientes (ganhos)", b: "Oportunidades que viraram cliente (estágio “Ganho”/“Cliente”). É o resultado concreto do seu funil. Cada cliente ganho deve ter uma licença correspondente na aba Licenças — se faltar, gere a licença pela aba Compras." },
+    crm_conversion: { t: "Conversão", b: "Percentual de contatos que viraram cliente (ganhos ÷ total de contatos). Mede a eficiência do seu funil de vendas. Para subir esse número, trabalhe os follow-ups em dia e mova as propostas paradas." },
+    crm_followups: { t: "Follow-ups (3 dias)", b: "Contatos com follow-up agendado para os próximos 3 dias. São os retornos que você prometeu dar — abra cada cartão do funil para registrar a atividade e agendar o próximo passo. Não deixar follow-up vencer é o que mantém a conversão alta." },
+    // --- Suporte (5 cartões do topo) ---
+    sup_needs: { t: "Aguardando sua resposta", b: "Chamados em que a última mensagem foi do cliente/consultor e ainda não houve resposta sua. São a sua fila de prioridade imediata. Abra o chamado, responda (a resposta vai por e-mail e fica no histórico) e o contador zera." },
+    sup_open: { t: "Em aberto (fila)", b: "Chamados que ainda não foram resolvidos nem fechados — incluindo os que estão em andamento ou aguardando o cliente. É o tamanho atual da sua fila de atendimento." },
+    sup_sla: { t: "SLA estourado", b: "Chamados que passaram do prazo de 1ª resposta sem serem respondidos. SLA por prioridade: urgente 4h, alta 8h, normal 24h, baixa 48h. Priorize zerar esse número — ele indica clientes esperando além do combinado." },
+    sup_avg: { t: "Tempo médio de 1ª resposta", b: "Média de horas entre a abertura do chamado e a sua primeira resposta, considerando os chamados já respondidos. Quanto menor, melhor a percepção de atendimento. Compare com as metas de SLA por prioridade." },
+    sup_total: { t: "Total de chamados", b: "Volume total de chamados já registrados (todas as situações), com o destaque de quantos foram abertos nos últimos 7 dias. Serve para dimensionar a demanda de suporte ao longo do tempo." },
+    // --- Integrações ---
+    sec_integrations: { t: "Integrações", b: "Conexões externas da plataforma: emissão de NFS-e (Focus NFe), gateways de pagamento e canais de aviso (e-mail/WhatsApp). Os parâmetros salvos aqui têm precedência sobre as variáveis de ambiente — você ajusta tudo pelo painel, sem mexer no servidor." },
+    integ_nfse: { t: "NFS-e (Focus NFe)", b: "Emissão automática da nota fiscal de serviço a cada pagamento aprovado, via Focus NFe (que abstrai o padrão de cada prefeitura). Obrigatórios: token, CNPJ do emitente, Inscrição Municipal e Código do Município (IBGE). Use o ambiente de Homologação para testar antes de ligar a Produção.", b2: "Dica: o item da lista de serviço 1.07 e a alíquota de ISS 2% são os padrões para licenciamento/suporte em TI no Simples Nacional — confirme com a sua contabilidade." },
+    integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (e-mail via Resend, WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto." },
   };
   function openInfo(key) {
     const i = INFO[key]; if (!i) return;
@@ -126,15 +141,18 @@
     $$(".view").forEach((v) => v.classList.add("hide"));
     const sec = $("#view-" + view); if (sec) sec.classList.remove("hide");
     ({ dashboard: loadDashboard, purchases: loadPurchases, licenses: loadLicenses,
-      crm: loadCrm, payments: loadPayments, support: loadSupport }[view] || (() => {}))();
+      crm: loadCrm, payments: loadPayments, support: loadSupport,
+      integrations: loadIntegrations }[view] || (() => {}))();
   }
 
   // ===================================================================
   //  DASHBOARD (interativo)
   // ===================================================================
-  const kpi = (v, l, cls = "", sub = "", goto = "") =>
-    `<div class="kpi ${goto ? "click" : ""}" ${goto ? `data-goto="${goto}"` : ""}>
-       <div class="v ${cls}">${v ?? 0}</div><div class="l">${esc(l)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>`;
+  // goto = navega para outra aba ao clicar; info = abre popup "Entenda este bloco".
+  // Ambos deixam o cartão clicável (classe "click"); info tem precedência visual de cursor.
+  const kpi = (v, l, cls = "", sub = "", goto = "", info = "") =>
+    `<div class="kpi ${(goto || info) ? "click" : ""}" ${goto ? `data-goto="${goto}"` : ""} ${info ? `data-info="${info}"` : ""}>
+       <div class="v ${cls}">${v ?? 0}</div><div class="l">${esc(l)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}${info ? `<span class="info-dot" title="Entenda este bloco">i</span>` : ""}</div>`;
 
   async function loadDashboard() {
     try {
@@ -580,10 +598,10 @@
       const [stats, contacts] = await Promise.all([api("/owner/crm/stats"), api("/owner/crm/contacts")]);
       const t = stats.totals || {};
       $("#crmKpis").innerHTML = [
-        kpi(t.contacts, "Contatos"),
-        kpi(t.clients, "Clientes (ganhos)", "green"),
-        kpi(stats.conversion + "%", "Conversão", "gold"),
-        kpi(t.due_soon, "Follow-ups (3d)", t.due_soon ? "gold" : ""),
+        kpi(t.contacts, "Contatos", "", "", "", "crm_contacts"),
+        kpi(t.clients, "Clientes (ganhos)", "green", "", "", "crm_clients"),
+        kpi(stats.conversion + "%", "Conversão", "gold", "", "", "crm_conversion"),
+        kpi(t.due_soon, "Follow-ups (3d)", t.due_soon ? "gold" : "", "", "", "crm_followups"),
       ].join("");
       const byStage = {}; CRM_STAGES.forEach((s) => byStage[s] = []);
       (contacts.contacts || []).forEach((c) => { (byStage[c.stage] || (byStage[c.stage] = [])).push(c); });
@@ -839,11 +857,11 @@
       const t = s.totals || {};
       const needs = t.needs_reply != null ? t.needs_reply : t.unanswered || 0;
       $("#supKpis").innerHTML = [
-        kpi(needs, "Aguardando sua resposta", needs ? "gold" : "green", "chamados a responder"),
-        kpi(t.open, "Em aberto (fila)", t.open ? "" : "green", "em atendimento"),
-        kpi(s.breaching, "SLA estourado", s.breaching ? "r" : "green", "fora do prazo de 1ª resp."),
-        kpi((s.avgFirstResponseHours || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "h", "Tempo médio 1ª resp.", "", "chamados respondidos"),
-        kpi(t.total, "Total de chamados", "", `${t.last7 || 0} nos últimos 7 dias`),
+        kpi(needs, "Aguardando sua resposta", needs ? "gold" : "green", "chamados a responder", "", "sup_needs"),
+        kpi(t.open, "Em aberto (fila)", t.open ? "" : "green", "em atendimento", "", "sup_open"),
+        kpi(s.breaching, "SLA estourado", s.breaching ? "r" : "green", "fora do prazo de 1ª resp.", "", "sup_sla"),
+        kpi((s.avgFirstResponseHours || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "h", "Tempo médio 1ª resp.", "", "chamados respondidos", "", "sup_avg"),
+        kpi(t.total, "Total de chamados", "", `${t.last7 || 0} nos últimos 7 dias`, "", "sup_total"),
       ].join("");
       supSetBadge(needs);
       const bs = s.byStatus || {};
@@ -969,6 +987,90 @@
       } catch (e) { btn.disabled = false; toast(e.message); }
     };
   }
+
+  // ===================================================================
+  //  INTEGRAÇÕES (NFS-e + status de pagamentos/avisos)
+  // ===================================================================
+  let NFSE_HAS_TOKEN = false;
+  async function loadIntegrations() {
+    try {
+      const d = await api("/owner/integrations");
+      const n = d.nfse || {};
+      NFSE_HAS_TOKEN = !!n.enabled;
+      const f = n.fields || {};
+      // Badge de status
+      const badge = $("#nfseBadge");
+      if (badge) {
+        if (n.ready) { badge.className = "tag active"; badge.textContent = `Pronta · ${n.env === "producao" ? "Produção" : "Homologação"}${n.auto ? " · auto" : ""}`; }
+        else if (n.enabled) { badge.className = "tag pending"; badge.textContent = "Falta configurar dados"; }
+        else { badge.className = "tag grace"; badge.textContent = "Não configurada"; }
+      }
+      // Preenche os campos
+      const set = (id, v) => { const el = $("#" + id); if (el != null && v != null) el.value = v; };
+      set("nf_env", n.env || "homologacao");
+      set("nf_cnpj", f.cnpj || "");
+      set("nf_im", f.im || "");
+      set("nf_municipio", f.municipio || "");
+      set("nf_item", f.item || "1.07");
+      set("nf_codtrib", f.codigoTributario || "");
+      set("nf_aliquota", f.aliquota != null ? f.aliquota : "0.02");
+      set("nf_regime", f.regimeEspecial || "");
+      set("nf_simples", String(f.optanteSimples) === "false" ? "false" : "true");
+      set("nf_auto", n.auto ? "true" : "false");
+      const hint = $("#nf_token_hint");
+      if (hint) hint.textContent = n.tokenMasked ? `Token atual: ${n.tokenMasked} (deixe em branco para manter)` : "Nenhum token salvo.";
+      const tok = $("#nf_token"); if (tok) tok.value = "";
+      // Bloco de demais integrações (somente leitura, vem do dashboard)
+      try {
+        const dash = await api("/owner/dashboard");
+        const gws = (dash.gateways || []);
+        const chip = (label, on) => `<span class="tag ${on ? "active" : "grace"}" style="margin:2px 4px 2px 0">${esc(label)}: ${on ? "ativo" : "—"}</span>`;
+        const names = { mercadopago: "Mercado Pago", stripe: "Stripe", pagarme: "Pagar.me" };
+        const all = ["mercadopago", "stripe", "pagarme"];
+        $("#integOthers").innerHTML =
+          `<div style="margin-bottom:6px"><b>Gateways de pagamento</b></div>` +
+          all.map((g) => chip(names[g] || g, gws.includes(g))).join("") +
+          `<div class="small muted" style="margin-top:10px">Os gateways e os canais de aviso (e-mail/WhatsApp) são definidos por variável de ambiente no servidor. A NFS-e acima pode ser ajustada direto por aqui.</div>`;
+      } catch (_) { $("#integOthers").innerHTML = `<span class="muted">—</span>`; }
+    } catch (e) {
+      const m = $("#nfseMsg"); if (m) { m.style.color = "#ff9aa8"; m.textContent = e.message; }
+    }
+  }
+  function nfsePayload() {
+    const v = (id) => { const el = $("#" + id); return el ? el.value.trim() : ""; };
+    const p = {
+      env: v("nf_env"), cnpj: v("nf_cnpj"), im: v("nf_im"), municipio: v("nf_municipio"),
+      item: v("nf_item"), codigoTributario: v("nf_codtrib"), aliquota: v("nf_aliquota"),
+      regimeEspecial: v("nf_regime"), optanteSimples: v("nf_simples") === "true", auto: v("nf_auto") === "true",
+    };
+    const tk = v("nf_token"); if (tk) p.token = tk;   // só envia se preenchido
+    return p;
+  }
+  function nfseMsg(text, ok) { const m = $("#nfseMsg"); if (!m) return; m.style.color = ok ? "#8fe6a0" : "#ff9aa8"; m.textContent = text || ""; }
+  (function wireIntegrations() {
+    const save = $("#btnNfseSave");
+    if (save) save.addEventListener("click", async () => {
+      save.disabled = true; nfseMsg("Salvando…", true);
+      try { await api("/owner/integrations/nfse", { method: "POST", body: JSON.stringify(nfsePayload()) }); nfseMsg("Configuração salva.", true); toast("NFS-e salva."); await loadIntegrations(); }
+      catch (e) { nfseMsg(e.message, false); }
+      finally { save.disabled = false; }
+    });
+    const test = $("#btnNfseTest");
+    if (test) test.addEventListener("click", async () => {
+      test.disabled = true; nfseMsg("Validando…", true);
+      try { const r = await api("/owner/integrations/nfse/test", { method: "POST", body: JSON.stringify({}) }); nfseMsg(r.message || "Configuração válida.", true); }
+      catch (e) { nfseMsg(e.message, false); }
+      finally { test.disabled = false; }
+    });
+    const clr = $("#btnNfseClearToken");
+    if (clr) clr.addEventListener("click", async () => {
+      if (!confirm("Remover o token salvo? A emissão volta a usar a variável de ambiente (se houver).")) return;
+      clr.disabled = true;
+      try { await api("/owner/integrations/nfse", { method: "POST", body: JSON.stringify({ token: "", clearToken: true }) }); toast("Token removido."); await loadIntegrations(); }
+      catch (e) { nfseMsg(e.message, false); }
+      finally { clr.disabled = false; }
+    });
+  })();
 
   // ===================================================================
   //  AUDITORIA (trilha completa)

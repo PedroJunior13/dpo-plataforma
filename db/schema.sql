@@ -450,3 +450,16 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_support_ticket_msgs_ticket ON support_ticket_messages(ticket_id);
+
+-- ===========================================================================
+--  CONFIGURACOES DA PLATAFORMA (key/value) — editaveis pelo painel do Dono.
+--  Usado pela aba "Integracoes" (ex.: parametros de emissao de NFS-e).
+--  Sempre que existir um valor aqui, ele tem PRECEDENCIA sobre a variavel de
+--  ambiente correspondente. Idempotente: a chave e unica e o seed nao sobrescreve.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS platform_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT,
+  updated_by  TEXT,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -987,7 +987,7 @@ tbody tr:hover{background:var(--surface-2);}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.61.0";
+const APP_VERSION = "v3.62.0";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2790,6 +2790,13 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.62.0", date:"22/06/2026", tag:"Demonstração com trava de 7 dias validada de ponta a ponta: link oficial expirado não abre mais o ambiente. Painel do dono ganhou blocos clicáveis (CRM e Suporte) com explicação, configuração de NFS-e pela aba Integrações e cobrança recorrente exclusiva do cartão", tagColor:"good", items:[
+    {type:"sec", txt:"⏳ <strong>Demonstração trava após 7 dias</strong>: o link oficial de demonstração (gerado no Painel) tem validade de <strong>7 dias validada no servidor</strong>. Ao expirar, o ambiente <strong>não abre mais</strong> — aparece a tela <strong>“Demonstração expirada”</strong> com opção de contratar. Mesmo quem já entrou é <strong>travado</strong> assim que a data passa (o limite também é checado dentro do ambiente)"},
+    {type:"add", txt:"🅸 <strong>Blocos clicáveis no painel do dono</strong>: os <strong>4 indicadores do CRM</strong> e os <strong>5 indicadores do Suporte</strong> agora têm o selo <strong>ⓘ</strong> — clicar abre uma janela explicando o que cada número significa e como é calculado"},
+    {type:"add", txt:"🧾 <strong>NFS-e configurável pela aba Integrações</strong>: token, CNPJ, inscrição municipal, código do município, item da lista, alíquota e emissão automática são definidos <strong>direto no painel</strong> (sem editar variáveis de ambiente), com <strong>teste de configuração</strong> e token mascarado"},
+    {type:"upd", txt:"💳 <strong>Cobrança recorrente exclusiva do cartão</strong>: no checkout, escolher <strong>Recorrente (−5%)</strong> trava a forma de pagamento em <strong>Cartão</strong> (PIX e boleto não renovam). A regra é validada também no servidor"},
+    {type:"upd", txt:"📘 <strong>Tutorial reorganizado</strong>: índice em duas colunas, atalhos “Voltar ao índice” em cada seção e nova seção de <strong>Integrações (NFS-e)</strong>"},
+  ]},
   { v:"v3.61.0", date:"22/06/2026", tag:"Login obrigatório restaurado: o ambiente de consultoria não entra mais sozinho como demonstração. O acesso é sempre pelo login do dono → Painel → Consultoria (como pedrobj@gmail.com). Ao Sair, é obrigatório logar de novo. Busca de CNPJ liberada na CSP de produção", tagColor:"good", items:[
     {type:"fix", txt:"🔐 <strong>Tela de login de volta</strong>: abrir o link da plataforma <strong>não entra mais direto</strong> no ambiente de demonstração. Sem uma sessão real (login do dono/assinante), o ambiente <strong>redireciona para a tela de login</strong>. O dono entra pelo <strong>Painel → Consultoria</strong> e passa a operar como <strong>pedrobj@gmail.com</strong> (e não mais como usuário de demonstração)"},
     {type:"fix", txt:"🚪 <strong>Sair encerra a sessão de verdade</strong>: ao clicar em <strong>Sair</strong>, a sessão do ambiente e a sessão da plataforma são limpas — na próxima vez é <strong>obrigatório fazer login novamente</strong> (nunca “entra direto como salvo”). Para voltar ao Painel sem deslogar, use o botão fixo <strong>Voltar ao Painel</strong>"},
@@ -8786,6 +8793,30 @@ window.addEventListener("hashchange",handleHash);
    a partir da sessão SaaS quando existir. É seguro: o ambiente é um sandbox por
    navegador (localStorage). Páginas públicas (#/portal, #/acompanhamento, ...) NÃO
    são afetadas — handleHash() trata o hash público antes de entrar no app. */
+/* Tela de "demonstracao expirada" (trava de 7 dias). Substitui o conteudo e
+   impede o uso do ambiente; oferece contratar ou voltar ao site. */
+function showDemoExpired(){
+  try{
+    document.body.innerHTML =
+      '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;'+
+      'background:#0b0d12;color:#e8eaf0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">'+
+        '<div style="max-width:460px;width:100%;text-align:center;background:#12151d;border:1px solid rgba(255,255,255,.08);'+
+        'border-radius:16px;padding:32px">'+
+          '<div style="font-size:40px;line-height:1;margin-bottom:10px">⏳</div>'+
+          '<h1 style="margin:0 0 8px;font-size:22px">Demonstração expirada</h1>'+
+          '<p style="color:#aeb4c2;line-height:1.6;margin:0 0 6px">O período de demonstração de <b>7 dias</b> terminou. '+
+          'Este link não dá mais acesso ao ambiente.</p>'+
+          '<p style="color:#aeb4c2;line-height:1.6;margin:0 0 18px">Para continuar, contrate o módulo e tenha o seu ambiente definitivo, '+
+          'ou solicite um novo link de demonstração.</p>'+
+          '<a href="/checkout.html" style="display:block;background:linear-gradient(135deg,#d9a441,#b9842b);color:#1b1300;'+
+          'font-weight:700;text-decoration:none;padding:13px;border-radius:10px;margin-bottom:10px">Ver módulos e contratar</a>'+
+          '<a href="/" style="display:block;border:1px solid rgba(255,255,255,.18);color:#e8eaf0;text-decoration:none;'+
+          'padding:12px;border-radius:10px">Voltar ao site</a>'+
+        '</div>'+
+      '</div>';
+    document.title="Demonstração expirada — DPO PJ Protection";
+  }catch(_){ try{ location.replace("/"); }catch(__){} }
+}
 (function enterConsultoria(){
   try{
     if(App.token && App.user) return; /* ja ha sessao no ambiente */
@@ -8797,6 +8828,19 @@ window.addEventListener("hashchange",handleHash);
        nunca exigem login nem redirecionam. */
     var isPublicRoute=/^#\/(portal|acompanhamento|politica|selo|treinamento|mapeamento|certificado)\//.test(location.hash||"");
     if(isPublicRoute) return;
+
+    /* TRAVA DE DEMONSTRACAO (7 dias): se a entrada e de demo e existe uma data de
+       expiracao gravada pelo link oficial (/demo?d=token), e ela ja passou, NAO
+       deixa usar — mostra a mensagem de expiracao e encerra. */
+    if(isDemo){
+      var dExp=localStorage.getItem("dpo_demo_expires")||"";
+      if(dExp && new Date(dExp).getTime() < Date.now()){
+        try{ localStorage.removeItem("dpo_demo_token"); localStorage.removeItem("dpo_demo_expires");
+             localStorage.removeItem("dpo_token"); localStorage.removeItem("dpo_user"); }catch(_){}
+        showDemoExpired();
+        return;
+      }
+    }
 
     /* Identidade real vinda da plataforma (login de backend em "/"). */
     var saas=null; try{ saas=JSON.parse(localStorage.getItem("dpo_user")||"null"); }catch(_){}

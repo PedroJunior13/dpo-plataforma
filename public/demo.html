@@ -18,8 +18,12 @@
     </div>
 
     <div id="error" class="hide" style="margin-top:18px">
-      <p style="color:#ff9aa8" id="errMsg">Link inválido.</p>
-      <a class="btn ghost block" href="/checkout.html" style="margin-top:10px">Ver módulos e contratar</a>
+      <div id="expIcon" style="font-size:34px;line-height:1;margin-bottom:8px">⏳</div>
+      <h2 id="errTitle" style="margin:0 0 6px">Demonstração expirada</h2>
+      <p style="color:#ff9aa8" id="errMsg">Este link de demonstração expirou.</p>
+      <p class="muted small" style="margin-top:8px">As demonstrações ficam ativas por 7 dias. Solicite um novo link ou contrate o módulo para ter seu ambiente definitivo.</p>
+      <a class="btn gold block" href="/checkout.html" style="margin-top:10px">Ver módulos e contratar</a>
+      <a class="btn ghost block" href="/" style="margin-top:8px">Voltar ao site</a>
     </div>
   </div>
 </div>
@@ -30,16 +34,19 @@
   const $ = (s) => document.querySelector(s);
   const token = new URLSearchParams(location.search).get("d");
 
-  function showError(m) {
+  function showError(m, title) {
     $("#loading").classList.add("hide");
+    if (title) $("#errTitle").textContent = title;
     $("#errMsg").textContent = m || "Link de demonstração inválido ou expirado.";
     $("#error").classList.remove("hide");
   }
 
-  // O ambiente de consultoria (/app/) é um sandbox completo e autossuficiente
-  // (roda 100% no navegador). A sessão de servidor abaixo é apenas para
-  // PERSONALIZAR o nome do visitante — por isso é "melhor esforço": com ou sem
-  // ela, o link SEMPRE abre o ambiente completo, igual à demonstração anterior.
+  // Dois modos de entrada:
+  //  (1) Link COM token (?d=...): é a demonstração oficial gerada pelo painel.
+  //      Tem validade de 7 dias — VALIDAMOS no servidor. Se expirou/é inválido,
+  //      TRAVAMOS o acesso e mostramos a mensagem de expiração (não abre o app).
+  //  (2) Sem token: demonstração pública (botão "Ver demonstração" do site) —
+  //      abre o sandbox autossuficiente direto, sem validade.
   (async () => {
     if (token) {
       try {
@@ -51,11 +58,25 @@
         if (res.ok && data.ok !== false && data.token) {
           localStorage.setItem("dpo_token", data.token);
           localStorage.setItem("dpo_user", JSON.stringify(data.user));
+          // Marca a entrada de demo válida (o app respeita esse limite localmente).
+          try {
+            localStorage.setItem("dpo_demo_token", token);
+            if (data.expiresAt) localStorage.setItem("dpo_demo_expires", data.expiresAt);
+          } catch (_) {}
+        } else {
+          // Token presente porém recusado pelo servidor = expirado/invalido → trava.
+          const expired = /expir/i.test(data.error || "");
+          showError(data.error || "Link de demonstração inválido ou expirado.",
+                    expired ? "Demonstração expirada" : "Link inválido");
+          return;
         }
-      } catch (e) { /* segue mesmo assim — o ambiente é autossuficiente */ }
+      } catch (e) {
+        showError("Não foi possível validar o link de demonstração. Tente novamente.", "Falha de conexão");
+        return;
+      }
     }
-    // ?demo=1 sinaliza entrada de demonstração pública: o ambiente abre como
-    // sandbox sem exigir login (o /app/ exige login real apenas fora da demo).
+    // ?demo=1 sinaliza entrada de demonstração: o ambiente abre como sandbox
+    // (o /app/ exige login real apenas fora da demo).
     location.replace("/app/?demo=1");
   })();
 })();

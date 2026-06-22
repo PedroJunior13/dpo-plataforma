@@ -64,7 +64,7 @@ export default async function handler() {
   // 4) Atualiza NFS-e em processamento (best-effort)
   try {
     const nfse = await import("./lib/nfse.js");
-    if (nfse.enabled()) {
+    if (await nfse.enabled()) {
       const pend = await sql`SELECT id FROM invoices WHERE status IN ('processing','pending') ORDER BY created_at DESC LIMIT 30`;
       for (const inv of pend) { try { await nfse.refreshInvoice(inv.id); } catch {} }
     }

@@ -103,6 +103,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .kpi.click:hover{border-color:var(--gold);transform:translateY(-2px)}
 .kpi.click::after{content:"›";position:absolute;top:12px;right:14px;color:var(--mut2);font-size:18px}
 .kpi .sub{color:var(--mut2);font-size:11px;margin-top:6px}
+/* KPI informativo (abre popup "Entenda este bloco"): mostra o selo "i" no canto
+   em vez do chevron de navegacao, para nao confundir com drill-down. */
+.kpi.click[data-info]::after{content:none}
+.kpi[data-info]{position:relative}
+.kpi[data-info] .info-dot{position:absolute;top:10px;right:12px;margin-left:0}
+.kpi[data-info]:hover .info-dot{border-color:var(--gold);color:var(--gold2);background:rgba(217,164,65,.14)}
 
 /* Selo de versao na nav */
 .ver{font-size:10.5px;color:var(--mut2);border:1px solid var(--line);border-radius:99px;padding:2px 8px;align-self:center;margin-left:4px;white-space:nowrap}

@@ -2,6 +2,7 @@
 // Doc: https://focusnfe.com.br/doc/  (endpoint /v2/nfse?ref=...)
 // As notas sao municipais; o provedor abstrai o padrao da prefeitura.
 import { sql, one } from "./db.js";
+import { allSettings } from "./settings.js";
 
 // Configuracao da emissao. Os PADROES ja vem com a tributacao mais favoravel a
 // empresa (EIRELI/Sociedade unipessoal optante pelo SIMPLES NACIONAL):
@@ -9,37 +10,86 @@ import { sql, one } from "./db.js";
 //  - item_lista_servico 1.07 (suporte/licenciamento/consultoria em TI/dados)
 //  - aliquota ISS 2% (piso constitucional; muitos municipios praticam 2% p/ TI)
 // IMPORTANTE: confirme o item da lista e a aliquota do SEU municipio com a
-// contabilidade. Os valores sao parametrizaveis por variaveis de ambiente.
-const cfg = () => ({
-  token: process.env.FOCUSNFE_TOKEN,
-  base: (process.env.FOCUSNFE_ENV === "producao")
-    ? "https://api.focusnfe.com.br"
-    : "https://homologacao.focusnfe.com.br",
-  cnpj: process.env.EMITENTE_CNPJ,
-  im: process.env.EMITENTE_INSCRICAO_MUNICIPAL,
-  municipio: process.env.EMITENTE_CODIGO_MUNICIPIO,
-  item: process.env.NFSE_ITEM_LISTA_SERVICO || "1.07",
-  // Codigo tributario do municipio (CNAE/cnae fiscal) — opcional, alguns municipios exigem.
-  codigoTributario: process.env.NFSE_CODIGO_TRIBUTARIO_MUNICIPIO || undefined,
-  aliquota: parseFloat(process.env.NFSE_ALIQUOTA_ISS || "0.02"),
-  // Regime tributario favoravel por padrao (Simples Nacional). Pode ser desligado.
-  optanteSimples: (process.env.NFSE_OPTANTE_SIMPLES || "true") !== "false",
-  // 6 = Microempresario e Empresa de Pequeno Porte (ME/EPP) — Simples Nacional.
-  regimeEspecial: process.env.NFSE_REGIME_ESPECIAL_TRIBUTACAO || undefined,
-});
+// contabilidade. Tudo e parametrizavel pela aba "Integracoes" do painel
+// (precedencia) ou por variaveis de ambiente (fallback).
+//
+// Mapa chave-do-banco -> variavel-de-ambiente:
+//   nfse_token              -> FOCUSNFE_TOKEN
+//   nfse_env                -> FOCUSNFE_ENV          (producao|homologacao)
+//   nfse_cnpj               -> EMITENTE_CNPJ
+//   nfse_im                 -> EMITENTE_INSCRICAO_MUNICIPAL
+//   nfse_municipio          -> EMITENTE_CODIGO_MUNICIPIO  (cod. IBGE 7 digitos)
+//   nfse_item_lista         -> NFSE_ITEM_LISTA_SERVICO
+//   nfse_codigo_tributario  -> NFSE_CODIGO_TRIBUTARIO_MUNICIPIO
+//   nfse_aliquota           -> NFSE_ALIQUOTA_ISS      (ex.: 0.02 = 2%)
+//   nfse_optante_simples    -> NFSE_OPTANTE_SIMPLES   ("true"/"false")
+//   nfse_regime_especial    -> NFSE_REGIME_ESPECIAL_TRIBUTACAO
+//   nfse_auto               -> NFSE_AUTO              ("true"/"false")
+const pick = (s, key, envName, def) => {
+  if (s && s[key] != null && s[key] !== "") return s[key];
+  if (envName && process.env[envName] != null && process.env[envName] !== "") return process.env[envName];
+  return def;
+};
 
-export function enabled() { return !!process.env.FOCUSNFE_TOKEN; }
+async function cfg() {
+  const s = await allSettings().catch(() => ({}));
+  const env = pick(s, "nfse_env", "FOCUSNFE_ENV", "homologacao");
+  return {
+    token: pick(s, "nfse_token", "FOCUSNFE_TOKEN", undefined),
+    base: env === "producao" ? "https://api.focusnfe.com.br" : "https://homologacao.focusnfe.com.br",
+    env,
+    cnpj: pick(s, "nfse_cnpj", "EMITENTE_CNPJ", undefined),
+    im: pick(s, "nfse_im", "EMITENTE_INSCRICAO_MUNICIPAL", undefined),
+    municipio: pick(s, "nfse_municipio", "EMITENTE_CODIGO_MUNICIPIO", undefined),
+    item: pick(s, "nfse_item_lista", "NFSE_ITEM_LISTA_SERVICO", "1.07"),
+    codigoTributario: pick(s, "nfse_codigo_tributario", "NFSE_CODIGO_TRIBUTARIO_MUNICIPIO", undefined),
+    aliquota: parseFloat(pick(s, "nfse_aliquota", "NFSE_ALIQUOTA_ISS", "0.02")),
+    optanteSimples: String(pick(s, "nfse_optante_simples", "NFSE_OPTANTE_SIMPLES", "true")) !== "false",
+    regimeEspecial: pick(s, "nfse_regime_especial", "NFSE_REGIME_ESPECIAL_TRIBUTACAO", undefined),
+    auto: String(pick(s, "nfse_auto", "NFSE_AUTO", "true")) !== "false",
+  };
+}
+
+// Habilitado quando ha token (no banco OU na env).
+export async function enabled() {
+  const c = await cfg();
+  return !!c.token;
+}
 
 // Emissao automatica apos a compra. Ligada por padrao quando o token existe;
-// pode ser desligada com NFSE_AUTO=false (ex.: para homologar antes).
-export function autoEnabled() {
-  return enabled() && (process.env.NFSE_AUTO || "true") !== "false";
+// pode ser desligada (nfse_auto=false) para homologar antes.
+export async function autoEnabled() {
+  const c = await cfg();
+  return !!c.token && c.auto;
+}
+
+// Diagnostico para a aba Integracoes: o que esta configurado e o que falta.
+// NUNCA expoe o token completo — apenas se existe e os 4 ultimos digitos.
+export async function status() {
+  const c = await cfg();
+  const tokenMasked = c.token ? ("•••• " + String(c.token).slice(-4)) : null;
+  const required = { token: !!c.token, cnpj: !!c.cnpj, im: !!c.im, municipio: !!c.municipio };
+  const missing = Object.keys(required).filter((k) => !required[k]);
+  return {
+    enabled: !!c.token,
+    auto: !!c.token && c.auto,
+    env: c.env,
+    ready: missing.length === 0,
+    missing,
+    tokenMasked,
+    fields: {
+      cnpj: c.cnpj || null, im: c.im || null, municipio: c.municipio || null,
+      item: c.item, codigoTributario: c.codigoTributario || null,
+      aliquota: c.aliquota, optanteSimples: c.optanteSimples,
+      regimeEspecial: c.regimeEspecial || null,
+    },
+  };
 }
 
 // Emite automaticamente a NFS-e do ULTIMO pagamento aprovado da assinatura.
 // Best-effort: nunca lanca — devolve {skipped|issued|error} para registro.
 export async function autoIssueForSubscription(subscriptionId) {
-  if (!autoEnabled()) return { skipped: "nfse_auto_off" };
+  if (!(await autoEnabled())) return { skipped: "nfse_auto_off" };
   try {
     const pay = await one(sql`SELECT * FROM payments WHERE subscription_id=${subscriptionId}
                               AND status IN ('approved','paid','active','confirmed') ORDER BY created_at DESC LIMIT 1`);
@@ -56,8 +106,11 @@ export async function autoIssueForSubscription(subscriptionId) {
 
 // Emite uma NFS-e para um pagamento aprovado.
 export async function issueForPayment(paymentId) {
-  const c = cfg();
-  if (!c.token) throw new Error("FOCUSNFE_TOKEN nao configurado.");
+  const c = await cfg();
+  if (!c.token) throw new Error("NFS-e nao configurada: informe o token Focus NFe na aba Integracoes.");
+  if (!c.cnpj || !c.im || !c.municipio) {
+    throw new Error("NFS-e incompleta: preencha CNPJ, Inscricao Municipal e Codigo do Municipio (IBGE) na aba Integracoes.");
+  }
 
   const pay = await one(sql`SELECT * FROM payments WHERE id=${paymentId}`);
   if (!pay) throw new Error("Pagamento nao encontrado.");
@@ -111,7 +164,7 @@ export async function issueForPayment(paymentId) {
 
 // Consulta o status de uma NFS-e ja enviada e atualiza a fatura.
 export async function refreshInvoice(invoiceId) {
-  const c = cfg();
+  const c = await cfg();
   const inv = await one(sql`SELECT * FROM invoices WHERE id=${invoiceId}`);
   if (!inv) throw new Error("Fatura nao encontrada.");
   const r = await fetch(`${c.base}/v2/nfse/${encodeURIComponent(inv.provider_ref)}`, {

@@ -15,6 +15,7 @@ import { audit, setAuditContext, auditOrigin } from "./lib/audit.js";
 import * as L from "./lib/licenses.js";
 import * as billing from "./lib/billing.js";
 import * as nfse from "./lib/nfse.js";
+import { allSettings, setSettings } from "./lib/settings.js";
 import { sendEmail, sendWhatsApp, waLink } from "./lib/notify.js";
 import { generateSecret, verifyTotp, keyuri } from "./lib/totp.js";
 import { assertFeature, capabilities, hasFeature } from "./lib/plan-features.js";
@@ -214,7 +215,8 @@ async function demoLogin(req) {
   const r = await userFromDemoToken((token || "").trim());
   if (r.error) return fail(r.error, 401);
   await sql`UPDATE users SET last_login=now() WHERE id=${r.user.id}`;
-  return ok({ token: await makeToken(r.user), user: pubUser(r.user), demo: true });
+  return ok({ token: await makeToken(r.user), user: pubUser(r.user), demo: true,
+    expiresAt: r.tenant?.demo_expires_at || null });
 }
 
 // Cadastro do cliente (cria usuario SEM tenant; vincula na ativacao).
@@ -342,10 +344,17 @@ async function mfaDisable(req, user) {
 // =====================================================================
 async function checkout(req) {
   const b = await readJson(req);
-  const { planId, billingType = "monthly", method = "pix", gateway, tenant: t } = b;
+  let { planId, billingType = "monthly", method = "pix", gateway, tenant: t } = b;
   const plan = await one(sql`SELECT * FROM plans WHERE id=${planId} AND active`);
   if (!plan || plan.id === "owner") return fail("Plano invalido.");
   if (!t?.email || !t?.name) return fail("Informe nome e e-mail do assinante.");
+
+  // Regra de negocio: cobranca RECORRENTE e EXCLUSIVA do cartao de credito
+  // (renovacao automatica so e possivel no cartao). Garantia no servidor, alem
+  // da trava do checkout no front: recusa a combinacao invalida.
+  if (billingType === "recurring" && method !== "credit_card") {
+    return fail("A cobranca recorrente e exclusiva do cartao de credito. Para PIX ou boleto, escolha a cobranca avulsa.", 400, { code: "RECURRING_REQUIRES_CARD" });
+  }
 
   const amount = billingType === "recurring" ? plan.price_recurring_cents : plan.price_month_cents;
 
@@ -587,8 +596,49 @@ async function ownerRoutes(req, user, seg, method) {
     return ok({ payments: rows });
   }
   if (seg[1] === "payments" && seg[2] && seg[3] === "invoice" && method === "POST") {
-    if (!nfse.enabled()) return fail("NFS-e nao configurada (FOCUSNFE_TOKEN).", 400);
+    if (!(await nfse.enabled())) return fail("NFS-e nao configurada. Configure na aba Integracoes.", 400);
     return ok(await nfse.issueForPayment(seg[2]));
+  }
+
+  // ---- INTEGRACOES (configuracao da NFS-e e demais parametros) ----
+  // GET: estado atual (token mascarado) + diagnostico do que falta.
+  if (r === "integrations" && method === "GET") {
+    return ok({ nfse: await nfse.status() });
+  }
+  // POST: salva os parametros de emissao da NFS-e (precedencia sobre env).
+  // O token so e sobrescrito quando enviado nao-vazio (evita apagar por engano).
+  if (seg[1] === "integrations" && seg[2] === "nfse" && seg[3] == null && method === "POST") {
+    const b = await readJson(req).catch(() => ({}));
+    const patch = {};
+    const map = {
+      env: "nfse_env", cnpj: "nfse_cnpj", im: "nfse_im", municipio: "nfse_municipio",
+      item: "nfse_item_lista", codigoTributario: "nfse_codigo_tributario",
+      aliquota: "nfse_aliquota", optanteSimples: "nfse_optante_simples",
+      regimeEspecial: "nfse_regime_especial", auto: "nfse_auto",
+    };
+    for (const [field, key] of Object.entries(map)) {
+      if (b[field] === undefined) continue; // nao mexe no que nao veio
+      let v = b[field];
+      if (typeof v === "boolean") v = v ? "true" : "false";
+      patch[key] = v;
+    }
+    // Token: so grava se veio preenchido; string vazia explicita = remover.
+    if (typeof b.token === "string") {
+      const tk = b.token.trim();
+      if (tk && !/^[•*]/.test(tk)) patch.nfse_token = tk;   // ignora o valor mascarado
+      else if (b.clearToken === true) patch.nfse_token = "";
+    }
+    await setSettings(patch, user.email);
+    await audit({ actorEmail: user.email, action: "integrations_nfse_updated", entity: "settings",
+      detail: { keys: Object.keys(patch), env: patch.nfse_env }, ip: clientIp(req) });
+    return ok({ nfse: await nfse.status() });
+  }
+  // POST .../test: valida a configuracao (campos obrigatorios presentes).
+  if (seg[1] === "integrations" && seg[2] === "nfse" && seg[3] === "test" && method === "POST") {
+    const st = await nfse.status();
+    if (!st.enabled) return fail("Informe o token Focus NFe para ativar a emissao.", 400);
+    if (!st.ready) return fail("Faltam dados obrigatorios: " + (st.missing || []).join(", "), 400);
+    return ok({ nfse: st, message: `Configuracao valida (ambiente: ${st.env}). Pronta para emitir.` });
   }
 
   // ---- COMPRAS (transacoes do checkout que chegam ao painel) ----
@@ -1178,16 +1228,14 @@ async function ownerDashboard() {
     GROUP BY 1 ORDER BY 1`, []);
   // Atividade recente (trilha de auditoria resumida).
   const recent = await safe(sql`SELECT created_at, action, actor_email, tenant_id FROM audit_log ORDER BY created_at DESC LIMIT 8`, []);
-  // Status detalhado da NFS-e (o que ainda falta configurar para a emissao automatica).
-  const nfseMissing = [];
-  if (!process.env.FOCUSNFE_TOKEN) nfseMissing.push("FOCUSNFE_TOKEN");
-  if (!process.env.EMITENTE_CNPJ) nfseMissing.push("EMITENTE_CNPJ");
-  if (!process.env.EMITENTE_INSCRICAO_MUNICIPAL) nfseMissing.push("EMITENTE_INSCRICAO_MUNICIPAL");
-  if (!process.env.EMITENTE_CODIGO_MUNICIPIO) nfseMissing.push("EMITENTE_CODIGO_MUNICIPIO");
+  // Status detalhado da NFS-e (considera banco + env: o que ainda falta configurar).
+  const nfseStatus = await safe(nfse.status(), { enabled: false, auto: false, missing: ["token", "cnpj", "im", "municipio"] });
+  const missLabel = { token: "Token Focus NFe", cnpj: "CNPJ do emitente", im: "Inscricao Municipal", municipio: "Codigo do Municipio (IBGE)" };
+  const nfseMissing = (nfseStatus.missing || []).map((k) => missLabel[k] || k);
   return ok({
     totals, mrrCents: mrr.cents, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
-    nfseEnabled: nfse.enabled(), nfseAuto: nfse.autoEnabled(), nfseMissing,
+    nfseEnabled: nfseStatus.enabled, nfseAuto: nfseStatus.auto, nfseMissing, nfseStatus,
     gateways: billing.availableGateways(),
   });
 }

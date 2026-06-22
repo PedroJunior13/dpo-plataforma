@@ -38,7 +38,7 @@ export async function onPaymentApproved({ tenantId, gateway, gatewayPaymentId, a
   await audit({ tenantId, actorEmail: "system", action: "payment_approved", entity: "payment", entityId: pay.id, detail: { gateway, amountCents } });
 
   // NFS-e automatica (se configurada)
-  if (nfse.enabled()) { try { await nfse.issueForPayment(pay.id); } catch (e) { console.error("[nfse]", e.message); } }
+  if (await nfse.enabled()) { try { await nfse.issueForPayment(pay.id); } catch (e) { console.error("[nfse]", e.message); } }
 
   // Aviso ao cliente
   if (tenant.email) {

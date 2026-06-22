@@ -20,6 +20,7 @@
       <button data-view="crm">CRM</button>
       <button data-view="payments">Financeiro</button>
       <button data-view="support">Suporte<span id="supNavBadge" class="nav-badge" hidden>0</span></button>
+      <button data-view="integrations">Integrações</button>
       <a href="/app/" class="nav-link" style="color:var(--gold2)">Consultoria ↗</a>
       <a href="/tutorial.html" class="nav-link">Tutorial</a>
       <span class="ver" id="verBadge">v—</span>
@@ -201,6 +202,77 @@
         <thead><tr><th>#</th><th>Aberto</th><th>SLA</th><th>Ambiente</th><th>Assunto</th><th>Categoria</th><th>Prioridade</th><th>Status</th><th style="text-align:right">Ação</th></tr></thead>
         <tbody id="supRows"><tr><td colspan="9" class="muted">Carregando…</td></tr></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- ============ INTEGRAÇÕES ============ -->
+  <section id="view-integrations" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:6px">
+      <div>
+        <h1>Integrações <span class="info-dot" data-info="sec_integrations" title="Entenda esta área">i</span></h1>
+        <p class="muted small">Configure a emissão de NFS-e (nota fiscal de serviço) e demais conexões da plataforma. Os valores aqui têm precedência sobre as variáveis de ambiente.</p>
+      </div>
+    </div>
+
+    <!-- NFS-e -->
+    <div class="card">
+      <div class="flex between wrap-actions">
+        <h2 style="margin:0">NFS-e — Focus NFe <span class="info-dot" data-info="integ_nfse" title="Entenda este bloco">i</span></h2>
+        <span id="nfseBadge" class="tag grace">Carregando…</span>
+      </div>
+      <p class="muted small" style="margin-top:6px">Emissão automática da nota a cada pagamento aprovado. Confirme o item da lista de serviço e a alíquota do ISS do seu município com a contabilidade.</p>
+
+      <div class="row c2" style="margin-top:12px">
+        <div class="field"><label>Token Focus NFe *</label>
+          <input id="nf_token" placeholder="(em branco mantém o token atual)" autocomplete="off">
+          <div class="small muted" id="nf_token_hint">—</div>
+        </div>
+        <div class="field"><label>Ambiente *</label>
+          <select id="nf_env"><option value="homologacao">Homologação (teste)</option><option value="producao">Produção (emite de verdade)</option></select>
+        </div>
+      </div>
+      <div class="row c3">
+        <div class="field"><label>CNPJ do emitente *</label><input id="nf_cnpj" placeholder="36.741.351/0001-09"></div>
+        <div class="field"><label>Inscrição Municipal *</label><input id="nf_im" placeholder="Inscrição na prefeitura"></div>
+        <div class="field"><label>Código do Município (IBGE) *</label><input id="nf_municipio" placeholder="Ex.: 3550308 (São Paulo)"></div>
+      </div>
+      <div class="row c3">
+        <div class="field"><label>Item da lista de serviço</label><input id="nf_item" placeholder="1.07"></div>
+        <div class="field"><label>Código tributário do município</label><input id="nf_codtrib" placeholder="(opcional — CNAE fiscal)"></div>
+        <div class="field"><label>Alíquota do ISS</label><input id="nf_aliquota" placeholder="0.02 (= 2%)"></div>
+      </div>
+      <div class="row c3">
+        <div class="field"><label>Regime especial de tributação</label>
+          <select id="nf_regime">
+            <option value="">— não informar —</option>
+            <option value="1">1 — Microempresa municipal</option>
+            <option value="2">2 — Estimativa</option>
+            <option value="3">3 — Sociedade de profissionais</option>
+            <option value="4">4 — Cooperativa</option>
+            <option value="5">5 — MEI (Simples Nacional)</option>
+            <option value="6">6 — ME/EPP (Simples Nacional)</option>
+          </select>
+        </div>
+        <div class="field"><label>Optante pelo Simples Nacional</label>
+          <select id="nf_simples"><option value="true">Sim</option><option value="false">Não</option></select>
+        </div>
+        <div class="field"><label>Emissão automática</label>
+          <select id="nf_auto"><option value="true">Ligada (emite a cada pagamento)</option><option value="false">Desligada</option></select>
+        </div>
+      </div>
+
+      <div id="nfseMsg" class="small" style="margin-top:4px"></div>
+      <div class="flex wrap-actions" style="gap:8px;margin-top:10px">
+        <button class="btn gold" id="btnNfseSave">Salvar configuração</button>
+        <button class="btn ghost" id="btnNfseTest">Testar configuração</button>
+        <button class="btn ghost" id="btnNfseClearToken" title="Remove o token salvo (volta a valer a variável de ambiente)">Limpar token</button>
+      </div>
+    </div>
+
+    <!-- Demais integrações (somente leitura: configuradas por variável de ambiente) -->
+    <div class="card" style="margin-top:16px">
+      <h2 style="margin:0">Pagamentos & avisos <span class="info-dot" data-info="integ_others" title="Entenda este bloco">i</span></h2>
+      <div id="integOthers" class="small muted" style="margin-top:8px">Carregando…</div>
     </div>
   </section>
 

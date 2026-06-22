@@ -47,15 +47,16 @@
       <label>Tipo de cobrança</label>
       <div class="seg" style="margin-bottom:14px">
         <label><input type="radio" name="billing" value="monthly" checked><span>Avulsa (mensal)</span><div class="small muted">Bloqueia no vencimento</div></label>
-        <label><input type="radio" name="billing" value="recurring"><span>Recorrente −5%</span><div class="small muted">Renova automático</div></label>
+        <label><input type="radio" name="billing" value="recurring"><span>Recorrente −5%</span><div class="small muted">Renova automático · só no cartão</div></label>
       </div>
 
       <label>Forma de pagamento</label>
-      <div class="seg" id="methods" style="margin-bottom:14px">
+      <div class="seg" id="methods" style="margin-bottom:6px">
         <label><input type="radio" name="method" value="pix" checked><span>PIX</span></label>
         <label><input type="radio" name="method" value="boleto"><span>Boleto</span></label>
         <label><input type="radio" name="method" value="credit_card"><span>Cartão</span></label>
       </div>
+      <p id="recHint" class="small muted hide" style="margin:0 0 14px">A cobrança <b>recorrente</b> (renovação automática) é exclusiva do <b>cartão de crédito</b>. PIX e boleto estão disponíveis apenas na cobrança avulsa.</p>
 
       <div class="field hide" id="gatewayWrap"><label>Gateway</label><select id="gateway"></select></div>
 
@@ -99,6 +100,36 @@
 
   function billing() { return document.querySelector('input[name="billing"]:checked').value; }
   function method() { return document.querySelector('input[name="method"]:checked').value; }
+  const methodRadio = (v) => document.querySelector('input[name="method"][value="' + v + '"]');
+  const billingRadio = (v) => document.querySelector('input[name="billing"][value="' + v + '"]');
+
+  // Regra de negócio: cobrança RECORRENTE é EXCLUSIVA do cartão de crédito.
+  // - Ao escolher Recorrente: trava em Cartão e desabilita PIX/Boleto.
+  // - Ao escolher PIX/Boleto: força a cobrança para Avulsa (mensal).
+  function setMethodEnabled(v, on) {
+    const r = methodRadio(v); if (!r) return;
+    r.disabled = !on;
+    const lbl = r.closest("label");
+    if (lbl) { lbl.style.opacity = on ? "" : ".4"; lbl.style.pointerEvents = on ? "" : "none"; lbl.title = on ? "" : "Disponível apenas na cobrança avulsa"; }
+  }
+  function syncBillingMethod() {
+    const rec = billing() === "recurring";
+    if (rec) {
+      const cc = methodRadio("credit_card"); if (cc) cc.checked = true;
+      setMethodEnabled("pix", false); setMethodEnabled("boleto", false); setMethodEnabled("credit_card", true);
+      $("#recHint").classList.remove("hide");
+    } else {
+      setMethodEnabled("pix", true); setMethodEnabled("boleto", true); setMethodEnabled("credit_card", true);
+      $("#recHint").classList.add("hide");
+    }
+  }
+  // Se o usuário escolher um método não-cartão, a cobrança não pode ser recorrente.
+  function onMethodChange() {
+    if (method() !== "credit_card" && billing() === "recurring") {
+      const m = billingRadio("monthly"); if (m) m.checked = true;
+      syncBillingMethod(); renderTotal();
+    }
+  }
 
   function priceFor(p) { return billing() === "recurring" ? p.price_recurring_cents : p.price_month_cents; }
 
@@ -148,7 +179,8 @@
     window.scrollTo(0, 0);
   }
 
-  $$('input[name="billing"]').forEach((r) => r.addEventListener("change", renderTotal));
+  $$('input[name="billing"]').forEach((r) => r.addEventListener("change", () => { syncBillingMethod(); renderTotal(); }));
+  $$('input[name="method"]').forEach((r) => r.addEventListener("change", onMethodChange));
 
   $("#btnPay").addEventListener("click", async () => {
     $("#err").classList.add("hide");
@@ -172,6 +204,7 @@
   });
 
   load();
+  syncBillingMethod();
 })();
 </script>
 </body>

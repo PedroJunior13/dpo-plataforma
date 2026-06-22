@@ -7,12 +7,20 @@
 <title>Tutorial operacional — DPO PJ Protection</title>
 <link rel="stylesheet" href="/styles.css">
 <style>
-  .doc{max-width:860px;margin:0 auto}
-  .doc h2{margin-top:36px;padding-top:18px;border-top:1px solid var(--line)}
+  .doc{max-width:880px;margin:0 auto}
+  .doc h2{margin-top:40px;padding-top:20px;border-top:1px solid var(--line);scroll-margin-top:80px}
   .doc h3{margin-top:24px;color:var(--gold2)}
   .doc p,.doc li{color:var(--mut);line-height:1.65}
   .doc ol,.doc ul{padding-left:22px}
   .doc li{margin:7px 0}
+  /* índice em grade de 2 colunas, cada item como “cartão-linha” clicável */
+  .toc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:12px}
+  @media(max-width:680px){.toc-grid{grid-template-columns:1fr}}
+  .toc-grid a{display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:10px;color:var(--txt);transition:.15s;font-size:13.5px}
+  .toc-grid a:hover{border-color:var(--gold);background:rgba(217,164,65,.07)}
+  .toc-grid a .ix{flex:none;width:24px;height:24px;border-radius:7px;background:rgba(217,164,65,.14);color:var(--gold2);font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center}
+  .toplink{display:inline-block;margin-top:10px;color:var(--gold2);font-size:12.5px;text-decoration:none}
+  .toplink:hover{text-decoration:underline}
   .step{display:flex;gap:14px;align-items:flex-start;margin:14px 0}
   .step .n{flex:none;width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;font-weight:800;display:flex;align-items:center;justify-content:center}
   .step .n.ok{background:linear-gradient(135deg,var(--green),#5fd07a);color:#06210d}
@@ -36,34 +44,39 @@
 
 <main class="wrap section-pad">
 <div class="doc">
-  <h1>Tutorial operacional do dono — vendas e gestão</h1>
-  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.5.0</b>).
+  <h1 id="topo">Tutorial operacional do dono — vendas e gestão</h1>
+  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.7.0</b>).
      Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
      <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
-     cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
+     <b>Integrações (NFS-e)</b>, cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
+
+  <div class="note ok" style="margin:14px 0"><b>Como navegar este tutorial:</b> clique em qualquer item do índice para pular direto à seção. Ao fim de cada seção há o atalho <b>“↑ Voltar ao índice”</b>. No painel, lembre-se de que <b>todo bloco/indicador tem o selo ⓘ</b> — clique no bloco (ou no selo) para abrir a explicação daquele número sem sair da tela.</div>
 
   <div class="card toc" style="margin:18px 0">
     <b>Índice</b>
-    <a href="#painel">1. Visão geral do painel (as 6 abas)</a>
-    <a href="#caminhos">2. Os dois caminhos de entrada do cliente</a>
-    <a href="#compras">3. Compras → gerar a licença em 1 clique ⭐</a>
-    <a href="#emitir">4. Emitir licença manualmente (venda assistida)</a>
-    <a href="#ativacao">5. Ativação pelo cliente: Conta → 2FA → Licença ⭐</a>
-    <a href="#gerenciar">6. Drawer “Gerenciar”: suporte, módulo/cota e kill-switch</a>
-    <a href="#crm">7. CRM: funil, contatos, atividades e campanhas ⭐</a>
-    <a href="#suporte">8. Suporte (Service Desk): fila, SLA, alertas e respostas ⭐</a>
-    <a href="#dashboard">9. Painel (dashboard): leitura rápida do negócio</a>
-    <a href="#financeiro">10. Financeiro e NFS-e</a>
-    <a href="#cobranca">11. Cobrança automática e vencimentos</a>
-    <a href="#seguranca">12. Segurança: 2FA, bloqueio e blindagem ⭐</a>
-    <a href="#auditoria">13. Auditoria e versionamento</a>
-    <a href="#demo">14. Link de demonstração (7 dias)</a>
-    <a href="#checklist">15. Checklist rápido</a>
+    <div class="toc-grid">
+      <a href="#painel"><span class="ix">1</span>Visão geral do painel (as 7 abas)</a>
+      <a href="#caminhos"><span class="ix">2</span>Os dois caminhos de entrada do cliente</a>
+      <a href="#compras"><span class="ix">3</span>Compras → gerar licença em 1 clique ⭐</a>
+      <a href="#emitir"><span class="ix">4</span>Emitir licença manualmente (venda assistida)</a>
+      <a href="#ativacao"><span class="ix">5</span>Ativação: Conta → 2FA → Licença ⭐</a>
+      <a href="#gerenciar"><span class="ix">6</span>Drawer “Gerenciar”: suporte, cota e kill-switch</a>
+      <a href="#crm"><span class="ix">7</span>CRM: funil, contatos e campanhas ⭐</a>
+      <a href="#suporte"><span class="ix">8</span>Suporte (Service Desk): fila, SLA e alertas ⭐</a>
+      <a href="#dashboard"><span class="ix">9</span>Painel (dashboard): leitura rápida</a>
+      <a href="#financeiro"><span class="ix">10</span>Financeiro e NFS-e</a>
+      <a href="#integracoes"><span class="ix">11</span>Integrações: NFS-e e pagamentos ⭐</a>
+      <a href="#cobranca"><span class="ix">12</span>Cobrança automática e vencimentos</a>
+      <a href="#seguranca"><span class="ix">13</span>Segurança: 2FA, bloqueio e blindagem ⭐</a>
+      <a href="#auditoria"><span class="ix">14</span>Auditoria e versionamento</a>
+      <a href="#demo"><span class="ix">15</span>Link de demonstração (trava em 7 dias) ⭐</a>
+      <a href="#checklist"><span class="ix">16</span>Checklist rápido</a>
+    </div>
   </div>
 
   <!-- 1 -->
   <h2 id="painel">1. Visão geral do painel</h2>
-  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.5.0</span> ao lado do menu.</p>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.7.0</span> ao lado do menu.</p>
   <ul>
     <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
     <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
@@ -71,8 +84,10 @@
     <li><span class="tab">CRM</span> <span class="new">NOVO</span> — funil de vendas, histórico de relacionamento e campanhas de fidelização.</li>
     <li><span class="tab">Suporte</span> <span class="new">NOVO</span> — <b>Service Desk</b>: fila de chamados abertos pelos clientes/consultores, com SLA, alertas de novo chamado, status e resposta direta. O contador vermelho ao lado do nome mostra quantos chamados <b>aguardam sua resposta</b>.</li>
     <li><span class="tab">Financeiro</span> — pagamentos recebidos e emissão de NFS-e (automática após a compra).</li>
+    <li><span class="tab">Integrações</span> <span class="new">NOVO</span> — configure a <b>NFS-e (Focus NFe)</b> direto pelo painel (token, CNPJ, inscrição municipal, código do município, item da lista, alíquota e emissão automática) e veja o status dos <b>gateways de pagamento</b>. Veja o item 11.</li>
   </ul>
   <p>Ainda na barra: <span class="btnref">Consultoria ↗</span> (entra no seu ambiente ilimitado de consultoria), <span class="btnref">Tutorial</span> (esta página) e <span class="btnref">Sair</span>.</p>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
   <div class="note"><b>Auditoria saiu da barra de menu</b> <span class="new">NOVO</span> — agora a trilha imutável fica <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b>, mostrando os <b>últimos 15 eventos</b> com <b>barra de rolagem</b> e a <b>origem/local</b> de cada registro (IP, dispositivo e geolocalização aproximada). Veja o item 13.</div>
   <div class="note">Os 5 cartões do topo do <span class="tab">Painel</span> são <b>clicáveis</b>: clicar leva direto à aba correspondente (ex.: “Compras a liberar” abre <span class="tab">Compras</span>).</div>
   <div class="note ok"><b>Novo:</b> todo bloco de informação do painel tem um selo <b>ⓘ</b>. Clique no bloco (ou no selo) para abrir uma <b>janela com a explicação daquele bloco</b> (sem sair da tela — a janela é apenas informativa, não redireciona). Use sempre que tiver dúvida sobre o que um número ou gráfico significa.</div>
@@ -85,6 +100,8 @@
   </ul>
   <div class="note">Módulos (a diferença é só o <b>número de clientes</b>): <b>Básico</b> 25 · <b>Intermediário</b> 100 · <b>Avançado</b> 150.
     Recorrente tem <b>5% de desconto</b> e renova sozinho; avulso bloqueia no vencimento. Todos os módulos têm o <b>mesmo ambiente</b> — por isso upgrade/downgrade nunca perde dados.</div>
+  <div class="note warn"><b>Cobrança recorrente é exclusiva do cartão de crédito</b> <span class="new">NOVO</span> — no checkout, ao escolher <b>Recorrente (−5%)</b> a forma de pagamento trava automaticamente em <b>Cartão</b> (PIX e boleto ficam desabilitados, pois não renovam sozinhos). Se o cliente escolher PIX/boleto, a cobrança volta para <b>Avulsa (mensal)</b>. Essa regra é validada também no servidor — não há como burlar.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 3 -->
   <h2 id="compras">3. Compras → gerar a licença em 1 clique <span class="new">NOVO</span></h2>
@@ -163,10 +180,12 @@
   <!-- 7 -->
   <h2 id="crm">7. CRM: funil, contatos, atividades e campanhas <span class="new">NOVO</span></h2>
   <p>Na aba <span class="tab">CRM</span> você acompanha quatro indicadores no topo — <b>Contatos</b>, <b>Clientes (ganhos)</b>, <b>Conversão</b> e <b>Follow-ups (3 dias)</b> — e gerencia o funil em quadro Kanban com 6 estágios: <b>Lead · Contato · Proposta · Ganho · Perdido · Cliente</b>.</p>
+  <div class="note ok"><b>Os 4 indicadores são clicáveis</b> <span class="new">NOVO</span> — cada cartão traz o selo <b>ⓘ</b>. Clique no cartão (ou no selo) para abrir uma janela explicando <b>o que aquele número significa</b> e como ele é calculado (ex.: como a <b>Conversão</b> é apurada, o que conta como <b>Follow-up dos próximos 3 dias</b>). A janela é apenas informativa — não muda nada nem redireciona.</div>
   <div class="step"><div class="n">1</div><div><span class="btnref">+ Novo contato</span>: cadastre Nome, Empresa, E-mail, WhatsApp, Estágio, Módulo de interesse e Observações → <span class="btnref">Adicionar ao funil</span>.</div></div>
   <div class="step"><div class="n">2</div><div>Clique em um cartão para abrir o contato. Ali você usa os botões de <b>WhatsApp/E-mail</b>, <b>move no funil</b> (basta clicar no estágio) e <b>registra atividade</b> (Nota, Ligação, E-mail, WhatsApp, Reunião) com data de <b>próximo follow-up</b> e descrição. O <b>Histórico</b> mostra tudo o que já foi feito.</div></div>
   <div class="step"><div class="n">3</div><div><span class="btnref">Campanhas</span> (de fidelização/retenção): crie uma campanha com <b>Canal</b> (WhatsApp/E-mail), <b>Público</b> (todos ou um estágio) e <b>Mensagem</b> usando <code>{nome}</code> e <code>{empresa}</code>. Em seguida clique em <span class="btnref">Disparar</span> para gerar um link de envio pronto para cada contato.</div></div>
   <div class="note">O funil do CRM também aparece resumido no <span class="tab">Painel</span> (cartão “Funil de vendas”), com atalho <span class="btnref">Abrir CRM</span>.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 8 -->
   <h2 id="suporte">8. Suporte (Service Desk): fila, SLA, alertas e respostas <span class="new">NOVO</span></h2>
@@ -184,6 +203,7 @@
 
   <h3>8.2 A sua fila de chamados</h3>
   <p>Na aba <span class="tab">Suporte</span> do painel você vê, no topo, os <b>KPIs</b>: <b>Aguardando sua resposta</b>, <b>Abertos</b>, <b>Em andamento</b>, <b>SLA estourado</b> e <b>Resolvidos</b>. Logo abaixo há dois mini-dashboards — <b>por status</b> e <b>por prioridade</b> — e a <b>fila</b> propriamente dita, ordenada por tempo de abertura. Cada linha mostra: <b># protocolo · Aberto (quando) · SLA · Ambiente (qual cliente) · Assunto · Categoria · Prioridade · Status · Ação</b>. Use o seletor <span class="btnref">Filtro</span> (abertos / todos / por status) e <span class="btnref">Atualizar</span> para recarregar.</p>
+  <div class="note ok"><b>Os 5 KPIs são clicáveis</b> <span class="new">NOVO</span> — cada cartão (<b>Aguardando sua resposta</b>, <b>Abertos</b>, <b>Em andamento</b>, <b>SLA estourado</b>, <b>Resolvidos</b>) tem o selo <b>ⓘ</b>. Clique para abrir a explicação do indicador — o que ele conta, como o SLA é apurado e o que priorizar. É só informativo, não altera a fila.</div>
   <div class="note ok"><b>Identificação de novos chamados:</b> todo chamado que <b>aguarda sua resposta</b> aparece com a etiqueta vermelha <b>● Novo / responder</b> e a linha fica destacada. Quando o chamado está esperando algo do cliente, a etiqueta é amarela <b>aguardando cliente</b>. Assim você bate o olho e sabe exatamente onde agir.</div>
 
   <h3>8.3 Alertas de novo chamado</h3>
@@ -199,6 +219,7 @@
   <div class="step"><div class="n ok">3</div><div>Use o seletor de <b>status</b> para mover o chamado: <b>Aberto → Em andamento → Aguardando cliente → Resolvido → Fechado</b>. Também dá para ajustar a <b>prioridade</b>. Cada mudança fica registrada.</div></div>
   <div class="note warn"><b>Prazos de 1ª resposta (SLA):</b> Urgente <b>4h</b> · Alta <b>8h</b> · Normal <b>24h</b> · Baixa <b>48h</b>. Quando o prazo vira, o chamado entra em <b>SLA estourado</b> (vermelho) no KPI e na linha — priorize esses.</div>
   <div class="note ok">Tudo do Service Desk (abertura, resposta, mudança de status) entra na <span class="tab">Auditoria</span>. Funciona para <b>licenças de clientes e de consultores</b>.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 9 -->
   <h2 id="dashboard">9. Painel (dashboard): leitura rápida do negócio</h2>
@@ -210,15 +231,41 @@
     <li><b>Atividade recente:</b> últimos eventos (resumo).</li>
     <li><b>Auditoria</b> <span class="new">NOVO</span>: no fim do Painel, o bloco mostra os <b>últimos 15 registros</b> em uma área com <b>barra de rolagem</b>, com <b>Quando · Ação · Responsável · Origem (IP, dispositivo e local) · Detalhe</b> e o botão <span class="btnref">Atualizar</span>.</li>
   </ul>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 10 -->
   <h2 id="financeiro">10. Financeiro e NFS-e (emissão automática) <span class="new">NOVO</span></h2>
   <p>Aba <span class="tab">Financeiro</span>: lista os pagamentos (Data, Cliente, Método, Valor, Status). Em pagamentos <b>aprovados/pagos</b>, o botão <span class="btnref">Emitir NFS-e</span> dispara a nota manualmente — mas, com a integração configurada, <b>a nota sai sozinha</b> assim que a compra é aprovada/licença gerada.</p>
   <div class="note ok"><b>NFS-e automática:</b> a cada compra aprovada, a plataforma emite a Nota Fiscal de Serviço do <b>último pagamento aprovado</b> da assinatura, sem você precisar clicar. A emissão é <b>idempotente</b> (nunca duplica) e <b>tolerante a falha</b> (se a prefeitura/provedor estiver fora do ar, registra o erro e você reemite depois). O bloco <b>Integrações</b> do <span class="tab">Painel</span> mostra o status: <b>NFS-e automática ligada</b> ou a lista do que <b>falta configurar</b>.</div>
-  <div class="note warn"><b>Tributação favorável já pré-configurada</b> (parametrizável por variáveis de ambiente): optante pelo <b>Simples Nacional</b> (ISS recolhido no DAS), item da lista de serviço <b>1.07</b> (TI/dados) e alíquota de ISS <b>2%</b> (piso). Configure no Netlify: <code>FOCUSNFE_TOKEN</code>, <code>EMITENTE_CNPJ</code>, <code>EMITENTE_INSCRICAO_MUNICIPAL</code> e <code>EMITENTE_CODIGO_MUNICIPIO</code>. Confirme o item e a alíquota do seu município com a contabilidade. Para homologar antes, use <code>NFSE_AUTO=false</code>.</div>
+  <div class="note warn"><b>Tributação favorável já pré-configurada:</b> optante pelo <b>Simples Nacional</b> (ISS recolhido no DAS), item da lista de serviço <b>1.07</b> (TI/dados) e alíquota de ISS <b>2%</b> (piso). Confirme o item e a alíquota do seu município com a contabilidade. <b>Toda a configuração agora é feita pela aba <span class="tab">Integrações</span></b> (item 11) — não é mais necessário editar variáveis de ambiente no Netlify.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 11 -->
-  <h2 id="cobranca">11. Cobrança automática e vencimentos</h2>
+  <h2 id="integracoes">11. Integrações: NFS-e e pagamentos <span class="new">NOVO</span></h2>
+  <p>A aba <span class="tab">Integrações</span> centraliza a configuração da <b>NFS-e (Focus NFe)</b> e mostra o estado dos <b>gateways de pagamento</b>. Tudo é salvo direto no painel — <b>sem editar variáveis de ambiente</b>. Um selo no topo do cartão indica o estado: <b>NFS-e automática ligada</b>, <b>Configuração incompleta</b> (falta algum campo) ou <b>Desligada</b>.</p>
+
+  <h3>11.1 Configurar a NFS-e (passo a passo)</h3>
+  <div class="step"><div class="n">1</div><div>Abra a aba <span class="tab">Integrações</span> e preencha o cartão <b>NFS-e (Focus NFe)</b>:
+    <ul style="margin:6px 0 0 16px">
+      <li><b>Token Focus NFe</b> — a chave da sua conta na Focus NFe (fica <b>mascarada</b> após salvar; use <span class="btnref">Limpar token</span> para trocar).</li>
+      <li><b>Ambiente</b> — <b>Homologação</b> (teste) ou <b>Produção</b> (notas válidas).</li>
+      <li><b>CNPJ do emitente</b>, <b>Inscrição Municipal</b> e <b>Código do município (IBGE)</b> — dados da empresa na prefeitura.</li>
+      <li><b>Item da lista de serviço</b> (padrão <code>1.07</code>), <b>Código tributário do município</b> e <b>Alíquota ISS %</b> (padrão <code>2</code>).</li>
+      <li><b>Regime especial</b> e <b>Optante pelo Simples Nacional</b> — conforme sua contabilidade.</li>
+      <li><b>Emissão automática</b> — quando ligado, a nota sai sozinha a cada compra aprovada.</li>
+    </ul>
+  </div>
+  <div class="step"><div class="n">2</div><div>Clique em <span class="btnref">Salvar</span>. A configuração passa a valer imediatamente (precede qualquer variável de ambiente antiga).</div></div>
+  <div class="step"><div class="n">3</div><div>Clique em <span class="btnref">Testar configuração</span> para validar os dados antes de emitir de verdade. O painel diz se está <b>pronto</b> ou <b>o que falta</b> (token, CNPJ, inscrição ou município).</div></div>
+  <div class="step"><div class="n ok">4</div><div>Com o selo <b>NFS-e automática ligada</b>, toda compra aprovada já emite a nota — sem mais nenhum clique (item 10).</div></div>
+  <div class="note">Comece em <b>Homologação</b> para conferir o XML/PDF da nota com a contabilidade. Quando estiver tudo certo, troque para <b>Produção</b> e ligue a <b>Emissão automática</b>. Toda alteração de integração fica registrada na <span class="tab">Auditoria</span> (evento <code>integrations_nfse_updated</code>).</div>
+
+  <h3>11.2 Pagamentos &amp; avisos</h3>
+  <p>O cartão <b>Pagamentos &amp; avisos</b> (somente leitura) lista os <b>gateways</b> ativos detectados pela plataforma. A configuração das chaves de gateway permanece nas variáveis de ambiente do Netlify (segurança), e o status também aparece no bloco <b>Integrações</b> do <span class="tab">Painel</span>.</p>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
+
+  <!-- 11 -->
+  <h2 id="cobranca">12. Cobrança automática e vencimentos</h2>
   <p>Todos os dias o sistema, sozinho:</p>
   <ol>
     <li>Avisa o cliente <b>3 dias antes</b> do vencimento.</li>
@@ -226,9 +273,10 @@
     <li>Passada a carência, <b>bloqueia o acesso</b> e suspende a licença.</li>
     <li>Quando o pagamento é confirmado (webhook do gateway), <b>reativa automaticamente</b>.</li>
   </ol>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 12 -->
-  <h2 id="seguranca">12. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
+  <h2 id="seguranca">13. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
   <ul>
     <li><b>2FA obrigatório no cadastro</b> (item 5): todo assinante ativa a verificação em duas etapas antes de usar a plataforma.</li>
     <li><b>Bloqueio por tentativas de login:</b> após várias senhas erradas a conta é travada por um período. Aparece na <span class="tab">Auditoria</span> como <b>“Conta bloqueada (tentativas)”</b>.</li>
@@ -237,23 +285,28 @@
     <li><b>Recuperação de senha do cliente:</b> pelo drawer <span class="btnref">Gerenciar → Resetar senha</span> você gera uma senha temporária para o cliente (item 6.1).</li>
     <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
     <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
-    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.5.0</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.7.0</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
   </ul>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 13 -->
-  <h2 id="auditoria">13. Auditoria e versionamento <span class="new">NOVO</span></h2>
+  <h2 id="auditoria">14. Auditoria e versionamento <span class="new">NOVO</span></h2>
   <p>A trilha de auditoria saiu da barra de menu e agora vive <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b> — os <b>últimos 15 eventos</b> em uma área com <b>barra de rolagem</b> e o botão <span class="btnref">Atualizar</span>. É um registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, <b>licença avulsa sem custo</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada, <b>chamado de suporte aberto/respondido/status alterado (Service Desk)</b> e ações de CRM (contato, estágio, campanha).</p>
   <ul>
     <li><b>Origem/local de cada registro</b> <span class="new">NOVO</span>: cada evento mostra de <b>onde</b> ele veio — <b>IP</b>, <b>dispositivo</b> (sistema/navegador) e a <b>geolocalização aproximada</b> (cidade/UF/país) derivada do IP, para investigar qualquer ação suspeita.</li>
     <li><b>Número e versão da licença</b>: cada licença tem um <b>número sequencial versionado</b> (ex.: <code>DPO-L-2026-1001</code>) e uma <b>versão</b> (<code>vN</code>) que incrementa a cada mudança de estado — controle e rastreabilidade total de <b>cada licença gerada</b>, paga ou avulsa, para fins legais e de conformidade.</li>
   </ul>
-
-  <!-- 14 -->
-  <h2 id="demo">14. Link de demonstração (7 dias)</h2>
-  <p>No <span class="tab">Painel</span>, <span class="btnref">Link de demonstração</span> gera um ambiente completo com <b>clientes de exemplo</b> para o visitante percorrer o processo por <b>7 dias</b>. Ao gerar um novo link, o ambiente anterior é <b>apagado e recriado</b>.</p>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 15 -->
-  <h2 id="checklist">15. Checklist rápido</h2>
+  <h2 id="demo">15. Link de demonstração (trava em 7 dias) <span class="new">NOVO</span></h2>
+  <p>No <span class="tab">Painel</span>, <span class="btnref">Link de demonstração</span> gera um ambiente completo com <b>clientes de exemplo</b> para o visitante percorrer o processo por <b>7 dias</b>. Ao gerar um novo link, o ambiente anterior é <b>apagado e recriado</b>.</p>
+  <div class="note danger"><b>Trava de expiração validada no servidor</b> <span class="new">NOVO</span> — o link de demonstração (<code>/demo.html?d=…</code>) tem validade de <b>7 dias</b>. Ao abrir, o servidor confere a validade: se o link <b>expirou ou é inválido</b>, o ambiente <b>não abre</b> — aparece a tela <b>“Demonstração expirada”</b> (com o ícone ⏳) e os botões <span class="btnref">Ver módulos e contratar</span> e <span class="btnref">Voltar ao site</span>. Mesmo que alguém já tenha entrado, o app <b>volta a travar</b> assim que a data passa (o limite é checado também dentro do ambiente). Não há como continuar usando uma demonstração vencida.</div>
+  <div class="note">A demonstração <b>pública</b> (botão “Ver demonstração” do site, sem token) abre um sandbox autossuficiente <b>sem validade</b> — serve só para conhecer a interface. A trava de 7 dias vale para o <b>link oficial gerado no painel</b>.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
+
+  <!-- 15 -->
+  <h2 id="checklist">16. Checklist rápido</h2>
   <ol>
     <li><b>Pagou sozinho?</b> Aba <span class="tab">Compras</span> → <span class="btnref">Gerar licença</span> → enviar link/mensagem.</li>
     <li><b>Venda assistida?</b> <span class="btnref">+ Emitir licença</span> → preencher → <span class="btnref">Gerar licença e link</span> → enviar.</li>
@@ -262,11 +315,13 @@
     <li>Cliente cresceu? <span class="btnref">Aplicar módulo</span> ou <span class="btnref">Salvar cota</span> — sem perder dados.</li>
     <li>Relacionamento: <span class="tab">CRM</span> para funil, follow-ups e <span class="btnref">Campanhas</span> de retenção.</li>
     <li>Chamado novo? <span class="tab">Suporte</span> (selo vermelho avisa) → <span class="btnref">Abrir</span> → <span class="btnref">Enviar resposta</span> → mudar status. Priorize os de <b>SLA estourado</b>.</li>
+    <li>Nota fiscal: configure uma vez em <span class="tab">Integrações</span> → <span class="btnref">Salvar</span> → <span class="btnref">Testar configuração</span>; depois a NFS-e sai sozinha.</li>
     <li>Dinheiro: <span class="tab">Financeiro</span> (NFS-e) e bloco <b>Vencimentos</b> com <span class="btnref">Cobrar</span> em 1 clique.</li>
     <li>Conformidade: <span class="tab">Auditoria</span> registra tudo.</li>
   </ol>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.6.0.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.7.0.</p>
 </div>
 </main>
 </body>
