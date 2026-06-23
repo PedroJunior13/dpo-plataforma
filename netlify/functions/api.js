@@ -1155,18 +1155,24 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     if (!t) return fail("Chamado nao encontrado.", 404);
     const newStatus = TICKET_STATUSES.includes(b.status) ? b.status : "aguardando_cliente";
     const att = sanitizeAttachment(b.attachment);
-    await sql`INSERT INTO support_ticket_messages
-      (ticket_id, author_role, author_email, author_name, body, attachment_name, attachment_type, attachment_data)
-      VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)},
-        ${att?.name || null}, ${att?.type || null}, ${att?.data || null})`;
+    // Mensagem sem o blob (RETURNING id) + anexo em UPDATE separado com teto de tempo:
+    // resposta do suporte nunca trava por causa de arquivo pesado (evita HTTP 502).
+    const msg = await one(sql`INSERT INTO support_ticket_messages
+      (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)})
+      RETURNING id`);
+    if (att) {
+      await withTimeout(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`, 5000, null);
+    }
     await sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
       first_response_at=coalesce(first_response_at, now()),
       resolved_at=${newStatus === "resolvido" || newStatus === "fechado" ? new Date().toISOString() : null}
       WHERE id=${t.id}`;
-    await audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
-      entity: "support_ticket", entityId: t.id, detail: { status: newStatus, attachment: att?.name || null } });
+    await withTimeout(audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
+      entity: "support_ticket", entityId: t.id, detail: { status: newStatus, attachment: att?.name || null } }), 2000, null);
     if (t.opener_email) {
-      await safe(sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
+      await withTimeout(sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
         subject: `[Chamado #${t.ticket_no}] Resposta do suporte — ${t.subject}`,
         type: "support",
         html: `<p>Olá ${escapeHtml(t.opener_name || "")},</p>
@@ -1174,7 +1180,7 @@ async function ownerSupportRoutes(req, user, sseg, method) {
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (acesse a plataforma para baixar)</p>` : ""}
           <p>Acesse a plataforma, menu <b>Suporte</b>, para acompanhar e responder.</p>
-          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }), null);
+          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }), 2500, null);
     }
     return ok({ ok: true, status: newStatus });
   }
@@ -1243,17 +1249,39 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const clientName = origin === "cliente" ? (String(b.client_name || "").slice(0, 180) || null) : null;
     const clientCnpj = origin === "cliente" ? (String(b.client_cnpj || "").slice(0, 32)  || null) : null;
     const att = sanitizeAttachment(b.attachment);
-    const t = await one(sql`INSERT INTO support_tickets
-      (tenant_id, opener_email, opener_name, category, subject, description, priority, status,
-       attachment_name, attachment_type, attachment_data, last_actor,
-       origin, client_ref, client_name, client_cnpj)
-      VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${description}, ${priority},
-        'aberto', ${att?.name || null}, ${att?.type || null}, ${att?.data || null}, 'cliente',
-        ${origin}, ${clientRef}, ${clientName}, ${clientCnpj}) RETURNING *`);
+    const descDb = description.slice(0, 8000);
+    // Grava o chamado SEM o anexo pesado e com RETURNING enxuto (id/numero/status):
+    // a escrita principal fica rapida e o blob de ate ~2MB nunca trafega de volta
+    // nem bloqueia a resposta — era a causa raiz do HTTP 502 (timeout do Netlify).
+    // A INSERT e resiliente a bancos sem as colunas de origem (origin/client_*):
+    // tenta com elas e, se faltarem, refaz sem — o chamado sempre e aberto.
+    let t;
+    try {
+      t = await one(sql`INSERT INTO support_tickets
+        (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor,
+         origin, client_ref, client_name, client_cnpj)
+        VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
+          'aberto', 'cliente', ${origin}, ${clientRef}, ${clientName}, ${clientCnpj})
+        RETURNING id, ticket_no, status`);
+    } catch (e) {
+      console.error("[support:open] insert c/ colunas de origem falhou — refazendo sem elas:", e?.message || e);
+      t = await one(sql`INSERT INTO support_tickets
+        (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor)
+        VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
+          'aberto', 'cliente')
+        RETURNING id, ticket_no, status`);
+    }
     await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
-      VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${description})`;
-    await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
-      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority, origin, client: clientName || null } });
+      VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${descDb})`;
+    // Anexo em escrita separada e com teto de tempo (best-effort): se o blob demorar,
+    // a abertura do chamado ja foi concluida e devolvida — nunca vira 502.
+    if (att) {
+      await withTimeout(sql`UPDATE support_tickets SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${t.id}`, 5000, null);
+    }
+    // Auditoria com teto de tempo — efeito colateral jamais bloqueia a resposta.
+    await withTimeout(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
+      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority, origin, client: clientName || null } }), 2000, null);
     // Notifica o suporte (dono). O envio do e-mail e BEST-EFFORT: usamos safe()
     // para que uma falha/lentidao do provedor (Resend) jamais derrube a abertura
     // do chamado — o protocolo ja foi gravado e deve ser sempre devolvido.
@@ -1309,14 +1337,20 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const att = sanitizeAttachment(b.attachment);
-    await sql`INSERT INTO support_ticket_messages
-      (ticket_id, author_role, author_email, author_name, body, attachment_name, attachment_type, attachment_data)
-      VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)},
-        ${att?.name || null}, ${att?.type || null}, ${att?.data || null})`;
+    // Mensagem gravada sem o blob (RETURNING id); o anexo vai em UPDATE separado com
+    // teto de tempo para que arquivos pesados nunca derrubem a resposta (HTTP 502).
+    const msg = await one(sql`INSERT INTO support_ticket_messages
+      (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)})
+      RETURNING id`);
+    if (att) {
+      await withTimeout(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`, 5000, null);
+    }
     const newStatus = t.status === "resolvido" || t.status === "fechado" ? "aberto" : t.status;
     await sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`;
-    await audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
-      entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } });
+    await withTimeout(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
+      entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } }), 2000, null);
     const inbox = SUPPORT_INBOX();
     if (inbox) {
       await withTimeout(sendEmail({ tenantId: tenant.id, to: inbox,
@@ -1336,9 +1370,14 @@ async function ownerDashboard() {
   // Cada bloco e tolerante a falha de schema (banco parcialmente migrado):
   // uma tabela/coluna ausente degrada APENAS aquele indicador, sem derrubar
   // o painel inteiro. Esta area de gestao nunca pode ficar inacessivel.
+  // "Assinantes" = consultorias reais (com licenca emitida), excluindo o ambiente
+  // do dono e ambientes de demonstracao. "ativos" = as que tem licenca ATIVA — assim
+  // 1 licenca ativa => 1 assinante ativo (antes contava tenants demo/sem licenca).
   const totals = await safe(one(sql`SELECT
-    (SELECT count(*)::int FROM tenants WHERE is_owner=FALSE) AS tenants,
-    (SELECT count(*)::int FROM tenants WHERE status='active' AND is_owner=FALSE) AS active,
+    (SELECT count(*)::int FROM tenants t WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+        AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS tenants,
+    (SELECT count(*)::int FROM tenants t WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+        AND t.status='active' AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id AND l.status='active')) AS active,
     (SELECT count(*)::int FROM tenants WHERE status IN ('suspended','blocked')) AS blocked,
     (SELECT count(*)::int FROM licenses WHERE status='active') AS active_licenses,
     (SELECT count(*)::int FROM licenses WHERE status='issued') AS pending_activation,

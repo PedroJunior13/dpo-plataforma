@@ -1009,7 +1009,7 @@ html.suppress-login #login-view{display:none!important;}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.63.4";
+const APP_VERSION = "v3.63.5";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2812,6 +2812,11 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.63.5", date:"23/06/2026", tag:"Service Desk à prova de falha: abrir e responder chamados (na consultoria do dono e em qualquer licença) não dá mais “HTTP 502” — funciona com precisão, com ou sem anexo. Tela de login não “pisca” mais ao sair da plataforma. Área de Configurações sem o 2FA redundante (o 2FA já é obrigatório no cadastro e em todo acesso)", tagColor:"good", items:[
+    {type:"fix", txt:"🛟 <strong>Fim do “Falha na comunicação com o suporte (HTTP 502)”</strong>: abrir ou responder um chamado <strong>sempre conclui</strong> — testado na <strong>consultoria do dono</strong> e em <strong>licenças avulsas</strong>. O chamado é <strong>gravado primeiro</strong> com retorno enxuto; o <strong>anexo</strong> vai em uma gravação separada com <strong>tempo-limite</strong>, e <strong>auditoria e e-mail de aviso</strong> rodam em segundo plano com teto rígido. Assim nenhuma etapa secundária estoura o limite do servidor e derruba o envio. Vale para <strong>todas as licenças, atuais e futuras</strong>"},
+    {type:"fix", txt:"⚡ <strong>Saída sem “piscar” da tela antiga</strong>: ao clicar em <strong>Sair</strong>, a antiga tela de login de demonstração chegava a aparecer por um instante antes de voltar à tela correta. Agora a interface é <strong>ocultada imediatamente</strong> e a transição fica limpa até a tela de login certa"},
+    {type:"remove", txt:"🔐 <strong>Configurações mais enxuta</strong>: removido o bloco <strong>“Segurança da conta — Autenticação de 2 fatores (2FA)”</strong>. Ficou <strong>redundante</strong>: o 2FA já é <strong>obrigatório no cadastro</strong> e exigido <strong>a cada acesso</strong> — não há mais nada para ativar/desativar manualmente"},
+  ]},
   { v:"v3.63.4", date:"22/06/2026", tag:"Acesso à consultoria sem o “piscar” da tela de login: ao entrar no seu ambiente de consultoria (pelo painel, por suporte ou pelo link de demonstração) a tela de login não aparece mais por um instante — você cai direto na interface certa. Anexo de chamado de suporte mais confiável (sem HTTP 502)", tagColor:"good", items:[
     {type:"fix", txt:"⚡ <strong>Fim do “flash” da tela de login</strong>: ao abrir a consultoria já autenticado (a partir do painel do dono, em modo suporte ou pelo link de demonstração), a tela de login chegava a <strong>piscar com um e-mail antigo</strong> antes de a interface correta abrir. Agora um <strong>guard no carregamento</strong> esconde a tela de login quando a entrada é automática — você vê <strong>direto</strong> o ambiente certo, sem o cadastro antigo aparecer"},
     {type:"fix", txt:"📎 <strong>Anexo de chamado à prova de falha</strong>: abrir ou responder um chamado de suporte <strong>com arquivo anexado</strong> não dá mais <strong>“Falha na comunicação com o suporte (HTTP 502)”</strong>. O chamado é <strong>gravado primeiro</strong> e o e-mail de aviso sai em segundo plano com <strong>tempo-limite rígido</strong> — mesmo que o servidor de e-mail demore, o anexo é salvo e a tela confirma o envio. Vale para <strong>todas as licenças, atuais e futuras</strong>"},
@@ -8227,16 +8232,6 @@ VIEWS.configuracoes=async()=>{ loading(); const d=await api("/audit"+_auditQS())
       <p class="muted" style="font-size:12px;margin-top:10px">Deixe em branco e salve para voltar ao padrão. Esta configuração vale para toda a carteira.</p>
     </div>`:``}
 
-    <div class="card" id="sec-2fa-card" style="margin-top:4px">
-      <h3><span class="gico">🔐</span> Segurança da conta — Autenticação de 2 fatores (2FA)</h3>
-      <p class="muted" style="margin-bottom:12px">Adicione uma 2ª camada de proteção ao seu acesso: além da senha, será pedido um <strong>código temporário</strong> gerado por um app autenticador (Google Authenticator, Authy ou Microsoft Authenticator) no seu celular. Recomendado pelas boas práticas de segurança (NIST/ISO 27001).</p>
-      <div class="bar-row"><span class="muted" style="width:170px">Status do seu 2FA</span><span id="sec-2fa-status">${App.user.twofa_enabled?badge("Ativado","b-green"):badge("Desativado","b-amber")}</span></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        ${App.user.twofa_enabled?`<button class="btn ghost" id="sec-2fa-recovery">🧾 Gerar novos códigos de recuperação</button><button class="btn ghost" id="sec-2fa-disable" style="color:var(--red);border-color:var(--red)">Desativar 2FA</button>`:`<button class="btn" id="sec-2fa-enable">🔐 Ativar 2FA</button>`}
-      </div>
-      <p class="muted" style="font-size:12px;margin-top:10px">Cada usuário gerencia o próprio 2FA. Administradores podem <em>redefinir</em> (desativar) o 2FA de um usuário em <strong>Usuários</strong>, caso ele perca o dispositivo e os códigos de recuperação.</p>
-    </div>
-
     ${can.admin()?`<div class="card" id="backup-card" style="margin-top:4px">
       <h3><span class="gico">🛡</span> Backup, Restauração & Continuidade do Negócio</h3>
       <p class="muted" style="margin-bottom:12px">Esta plataforma separa <strong>código</strong> (o arquivo da aplicação) de <strong>dados</strong> (armazenados localmente). O <strong>backup completo</strong> é um arquivo <code>.json</code> <strong>portável e verificável (SHA-256)</strong> — guarde-o em <strong>HD externo, pen drive ou unidade de rede</strong> e restaure em <strong>qualquer máquina</strong> que execute a aplicação. Ideal para troca de equipamento e alta disponibilidade para os clientes.</p>
@@ -8292,7 +8287,6 @@ VIEWS.configuracoes=async()=>{ loading(); const d=await api("/audit"+_auditQS())
     </div>`:``}
 
     <div id="audit-panel">${auditPanelHTML(d)}</div>`;
-  wire2faSettings();
   wireAuditPanel();
   if(can.admin()){
     if(el("org-save"))el("org-save").onclick=()=>{ const v=(el("org-name-input").value||"").trim(); DB.org_name=v||null; persist(); logAct("update_org","system","Definiu a consultoria responsável: "+(v||DEFAULT_ORG)); toast("Consultoria responsável atualizada"); go("configuracoes",{},{noPush:true}); };
@@ -8849,6 +8843,12 @@ el("logout-btn").onclick=()=>{
      SaaS (dono/assinante), para que na proxima vez seja OBRIGATORIO logar de novo
      (nunca "entra direto como salvo"). Para voltar ao Painel sem deslogar existe o
      botao fixo "Voltar ao Painel". */
+  /* Suprime QUALQUER tela de login deste SPA antes de deslogar/redirecionar:
+     sem isso, a antiga tela de login de demonstracao "piscava" por um instante
+     ate o location.replace("/") assumir. Com suppress-login (#login-view oculto),
+     a transicao fica em branco e limpa ate cair na tela de login correta. */
+  try{ document.documentElement.classList.add("suppress-login"); }catch(_){}
+  try{ el("app-view").classList.add("hidden"); el("public-view").classList.add("hidden"); el("login-view").classList.add("hidden"); }catch(_){}
   try{ logout(); }catch(_){}
   location.hash="";
   try{ localStorage.removeItem("dpo_token"); localStorage.removeItem("dpo_user"); localStorage.removeItem("dpo_saas"); }catch(_){}
