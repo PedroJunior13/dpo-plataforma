@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.8.6";
+  const PLATFORM_VERSION = "2.8.7";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -294,6 +294,8 @@
   async function openEmitir() {
     await ensurePlans();
     $("#e_plan").innerHTML = PLANS.map((p) => {
+      // Plano "Personalizado": o dono define clientes e valor nos campos próprios.
+      if (p.id === "custom") return `<option value="custom">Personalizado — definir clientes e valor</option>`;
       const q = p.client_quota == null ? "ilimitado" : p.client_quota + " clientes";
       const cents = p.price_month_cents || FALLBACK_PRICE[p.id] || 0;
       return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(cents)}/mês</option>`;
@@ -301,8 +303,11 @@
     ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
     if ($("#e_validdays")) $("#e_validdays").value = "";
     if ($("#e_dueday")) $("#e_dueday").value = "";
+    if ($("#e_quota")) $("#e_quota").value = "";
+    if ($("#e_price")) $("#e_price").value = "";
     if ($("#e_term")) $("#e_term").value = "monthly";
     if ($("#e_pricing")) $("#e_pricing").value = "paid";
+    if ($("#e_plan")) $("#e_plan").value = (PLANS.find((p) => p.id === "basic") ? "basic" : ($("#e_plan").value || ""));
     syncPricingFields();
     $("#emitForm").classList.remove("hide");
     $("#emitResult").classList.add("hide");
@@ -316,14 +321,19 @@
     const free = $("#e_pricing") && $("#e_pricing").value === "free";
     const term = $("#e_term") ? $("#e_term").value : "monthly";
     const custom = term === "custom";
+    const customPlan = $("#e_plan") && $("#e_plan").value === "custom";
     const t = (id, on) => { const el = $("#" + id); if (el) el.classList.toggle("hide", !on); };
     t("e_billing_wrap", !free);
     t("e_validdays_wrap", custom);
     t("e_dueday_wrap", !custom);
     t("e_reason_wrap", free);
+    // Plano "Personalizado": mostra qtd. de clientes e valor; o "Valor" some na cortesia.
+    t("e_custom_wrap", customPlan);
+    t("e_price_wrap", customPlan && !free);
   }
   { const ep = $("#e_pricing"); if (ep) ep.addEventListener("change", syncPricingFields); }
   { const et = $("#e_term"); if (et) et.addEventListener("change", syncPricingFields); }
+  { const epl = $("#e_plan"); if (epl) epl.addEventListener("change", syncPricingFields); }
   $("#btnEmitir").addEventListener("click", openEmitir);
   $("#btnEmitirTop").addEventListener("click", openEmitir);
   $("#btnEmitOutra").addEventListener("click", openEmitir);
@@ -357,16 +367,23 @@
       if (free && !$("#e_reason").value.trim()) { toast("Informe o motivo da cortesia (controle)."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
       const term = $("#e_term") ? $("#e_term").value : "monthly";
       if (term === "custom" && !(parseInt($("#e_validdays").value, 10) > 0)) { toast("Informe a validade personalizada em dias."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
+      const planId = $("#e_plan").value;
+      // Plano "Personalizado": exige quantidade de clientes; valor é opcional.
+      const customQuota = planId === "custom" ? parseInt($("#e_quota").value, 10) : null;
+      if (planId === "custom" && !(customQuota > 0)) { toast("Plano Personalizado: informe a quantidade de clientes (maior que zero)."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
+      const customPriceRaw = planId === "custom" ? parseFloat(String($("#e_price").value).replace(",", ".")) : NaN;
       const dueDay = parseInt($("#e_dueday").value, 10);
       const body = {
         tenant: { name, doc: $("#e_doc").value.trim(), email: $("#e_email").value.trim(), phone: $("#e_phone").value.trim() },
-        planId: $("#e_plan").value,
+        planId,
         pricing,
         billingType: free ? "monthly" : $("#e_billing").value,
         term,
         reason: free ? $("#e_reason").value.trim() : null,
         validDays: term === "custom" ? (parseInt($("#e_validdays").value, 10) || null) : null,
         dueDay: (term !== "custom" && dueDay >= 1 && dueDay <= 28) ? dueDay : null,
+        customQuota: planId === "custom" ? customQuota : null,
+        customPrice: (planId === "custom" && !free && Number.isFinite(customPriceRaw) && customPriceRaw >= 0) ? customPriceRaw : null,
       };
       const r = await api("/owner/licenses", { method: "POST", body: JSON.stringify(body) });
       showEmitResult(r);
@@ -523,6 +540,7 @@
         <div class="it"><div class="k">Tipo</div><div class="v">${(l.pricing || "paid") === "free" ? `<span class="tag issued">Cortesia</span>${l.issue_reason ? ` <span class="small muted">${esc(l.issue_reason)}</span>` : ""}` : `<span class="tag active">Paga</span>`}</div></div>
         <div class="it"><div class="k">Clientes</div><div class="v">${l.clients_count ?? 0}${quota != null ? " / " + quota : " / ∞"}</div></div>
         <div class="it"><div class="k">Validade</div><div class="v">${dt(l.valid_until)} ${vencBadge(l.valid_until)}${l.billing_cycle ? ` <span class="small muted">${esc(cycleLabel(l.billing_cycle))}</span>` : ""}</div></div>
+        ${l.custom_price_cents != null ? `<div class="it"><div class="k">Valor combinado</div><div class="v">${brl(l.custom_price_cents)}</div></div>` : ""}
       </div>
 
       <h3 style="margin-top:14px">Suporte — acessar e resolver no perfil do cliente</h3>
@@ -538,7 +556,7 @@
       <h3 style="margin-top:14px">Módulo & cota</h3>
       <div class="row c2">
         <div class="field"><label>Mudar módulo (upgrade/downgrade — sem perder dados)</label>
-          <select id="mb_plan">${PLANS.map((p) => `<option value="${esc(p.id)}" ${p.id === l.plan_id ? "selected" : ""}>${esc(p.name)} — ${p.client_quota == null ? "ilimitado" : p.client_quota + " clientes"}</option>`).join("")}</select>
+          <select id="mb_plan">${PLANS.filter((p) => p.id !== "custom" || p.id === l.plan_id).map((p) => `<option value="${esc(p.id)}" ${p.id === l.plan_id ? "selected" : ""}>${esc(p.name)} — ${p.client_quota == null ? "ilimitado" : p.client_quota + " clientes"}</option>`).join("")}</select>
         </div>
         <div class="field"><label>Cota personalizada (vazio = padrão do módulo)</label>
           <input id="mb_quota" type="number" min="0" value="${l.client_quota_override != null ? esc(l.client_quota_override) : ""}" placeholder="ex.: 200">
@@ -747,7 +765,7 @@
       </div>
       <div class="row c2">
         <div class="field"><label>Estágio</label><select id="g_stage">${CRM_STAGES.map((s) => `<option value="${s}">${esc(stageLabel[s])}</option>`).join("")}</select></div>
-        <div class="field"><label>Módulo de interesse</label><select id="g_plan"><option value="">—</option>${PLANS.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>Módulo de interesse</label><select id="g_plan"><option value="">—</option>${PLANS.filter((p) => p.id !== "custom").map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></div>
       </div>
       <div class="field"><label>Observações</label><textarea id="g_notes" rows="2"></textarea></div>
       <button class="btn gold block" id="g_save">Adicionar ao funil</button>`;

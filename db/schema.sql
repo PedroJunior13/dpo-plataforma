@@ -131,6 +131,10 @@ ALTER TABLE licenses ADD COLUMN IF NOT EXISTS issue_reason TEXT;
 -- Ciclo da licenca (informativo/gestao): 'monthly' | 'annual' | 'custom'. A trava real
 -- usa valid_until (avulso) ou a assinatura (recorrente); este campo documenta a escolha.
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS billing_cycle TEXT;
+-- Valor personalizado (centavos) de uma licenca avulsa "Personalizada" emitida pelo
+-- dono. Informativo/gestao (registro do que foi cobrado/combinado); a cota custom e
+-- aplicada via tenants.client_quota_override (trava real do limite de clientes).
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS custom_price_cents INT;
 
 -- =====================================================================
 --  6) AUDITORIA DE LICENCAS (append-only, imutavel, versionado)
@@ -321,16 +325,26 @@ CREATE TABLE IF NOT EXISTS document_versions (
 INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features) VALUES
  ('basic', 'Basico',         1, 25,  35000, 33250, 357000,
    '["Gestao de ate 25 clientes","Solicitacoes de titulares (art. 18 LGPD)","Registro e tratativa de incidentes","Documentos versionados (LGPD/GDPR)","Selo de compliance & paginas publicas","Bilingue PT/EN · desktop e mobile","Suporte por e-mail"]'),
- ('inter', 'Intermediario',  2, 100, 50000, 47500, 510000,
-   '["Tudo do modulo Basico","Gestao de ate 100 clientes","Projetos e fases com Gantt","Tarefas por fase do projeto","Treinamentos & certificados verificaveis","Alerta de cronograma (prazos de adequacao)","Suporte prioritario"]'),
- ('adv',   'Avancado',       3, 150, 80000, 76000, 816000,
-   '["Tudo do modulo Intermediario","Gestao de ate 150 clientes","Equipe com acesso por cliente (menor privilegio)","Marca da consultoria nos relatorios","Suporte dedicado & onboarding assistido"]'),
+ ('inter', 'Intermediario',  2, 50, 50000, 47500, 510000,
+   '["Tudo do modulo Basico","Gestao de ate 50 clientes","Projetos e fases com Gantt","Tarefas por fase do projeto","Treinamentos & certificados verificaveis","Alerta de cronograma (prazos de adequacao)","Suporte prioritario"]'),
+ ('adv',   'Avancado',       3, 100, 80000, 76000, 816000,
+   '["Tudo do modulo Intermediario","Gestao de ate 100 clientes","Equipe com acesso por cliente (menor privilegio)","Marca da consultoria nos relatorios","Suporte dedicado & onboarding assistido"]'),
  ('owner', 'Dono da Plataforma', 99, NULL, 0, 0, 0,
    '["Ambiente administrativo","Cadastro ilimitado de clientes para consultoria","Gestao de licencas e tenants","Auditoria global"]')
 ON CONFLICT (id) DO UPDATE SET
   name=EXCLUDED.name, tier=EXCLUDED.tier, client_quota=EXCLUDED.client_quota,
   price_month_cents=EXCLUDED.price_month_cents, price_recurring_cents=EXCLUDED.price_recurring_cents,
   price_annual_cents=EXCLUDED.price_annual_cents, features=EXCLUDED.features;
+
+-- Plano "Personalizado" (somente para licencas avulsas emitidas pelo dono):
+-- active=FALSE para NAO aparecer no checkout publico; o dono escolhe a quantidade de
+-- clientes e o valor no ato da emissao. A cota custom e gravada em
+-- tenants.client_quota_override; o valor combinado em licenses.custom_price_cents.
+INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features, active) VALUES
+ ('custom', 'Personalizado', 50, NULL, 0, 0, 0,
+   '["Quantidade de clientes definida pelo dono","Valor combinado caso a caso","Mesma plataforma completa","Validade/vencimento configuravel"]', FALSE)
+ON CONFLICT (id) DO UPDATE SET
+  name=EXCLUDED.name, tier=EXCLUDED.tier, features=EXCLUDED.features, active=EXCLUDED.active;
 
 -- Tenant do dono (ambiente administrativo + consultoria ilimitada)
 INSERT INTO tenants (id, name, email, plan_id, status, is_owner)

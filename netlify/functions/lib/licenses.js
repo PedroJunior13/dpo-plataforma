@@ -49,9 +49,19 @@ async function nextLicenseNo() {
 // ---------------------------------------------------------------
 //  Emissao de licenca (cria tenant se necessario)
 // ---------------------------------------------------------------
-export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", billingCycle = "monthly", pricing = null, reason = null, validDays = null, subscriptionId = null, validUntil = null, dueDay = null, actor }) {
+export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", billingCycle = "monthly", pricing = null, reason = null, validDays = null, subscriptionId = null, validUntil = null, dueDay = null, customQuota = null, customPriceCents = null, actor }) {
   const plan = await one(sql`SELECT * FROM plans WHERE id=${planId}`);
   if (!plan) throw new Error("Plano inexistente.");
+
+  // Licenca AVULSA PERSONALIZADA (dono): cota e valor definidos no ato da emissao.
+  // - cota custom (>0) vira o snapshot da licenca E o override do tenant (trava real);
+  // - cota null/0 => usa a cota padrao do plano.
+  // - valor custom (>=0, centavos) e gravado em custom_price_cents (informativo).
+  const cqNum = parseInt(customQuota, 10);
+  const hasCustomQuota = Number.isFinite(cqNum) && cqNum > 0;
+  const licQuota = hasCustomQuota ? cqNum : plan.client_quota;
+  const cpcNum = parseInt(customPriceCents, 10);
+  const hasCustomPrice = Number.isFinite(cpcNum) && cpcNum >= 0;
 
   // Tipo comercial: 'free' = cortesia/avulsa SEM custo; 'paid' = paga.
   // billingType "free" tambem marca cortesia (compat. com o seletor do painel).
@@ -110,19 +120,28 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     lic = await one(sql`
       INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason, billing_cycle)
       VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
-              'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason}, ${cycle})
+              'issued', ${licQuota}, ${vu}, ${licenseNo}, ${price}, ${issueReason}, ${cycle})
       RETURNING *`);
   } catch (e) {
     console.error("[issueLicense] INSERT completo falhou, usando fallback base:", e?.message || e);
     lic = await one(sql`
       INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until)
       VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
-              'issued', ${plan.client_quota}, ${vu})
+              'issued', ${licQuota}, ${vu})
       RETURNING *`);
     try { await sql`UPDATE licenses SET license_no=${licenseNo}     WHERE id=${lic.id}`; lic.license_no = licenseNo; } catch {}
     try { await sql`UPDATE licenses SET pricing=${price}            WHERE id=${lic.id}`; lic.pricing = price; } catch {}
     try { await sql`UPDATE licenses SET issue_reason=${issueReason} WHERE id=${lic.id}`; lic.issue_reason = issueReason; } catch {}
     try { await sql`UPDATE licenses SET billing_cycle=${cycle}      WHERE id=${lic.id}`; lic.billing_cycle = cycle; } catch {}
+  }
+
+  // Cota personalizada => grava o override no tenant (trava real do limite). Valor
+  // personalizado => grava em custom_price_cents (best-effort; coluna opcional).
+  if (hasCustomQuota) {
+    try { await sql`UPDATE tenants SET client_quota_override=${cqNum}, updated_at=now() WHERE id=${tid}`; } catch (e) { console.error("[issueLicense] override cota custom nao-fatal:", e?.message || e); }
+  }
+  if (hasCustomPrice) {
+    try { await sql`UPDATE licenses SET custom_price_cents=${cpcNum} WHERE id=${lic.id}`; lic.custom_price_cents = cpcNum; } catch (e) { console.error("[issueLicense] custom_price_cents nao-fatal:", e?.message || e); }
   }
 
   // Registro de evento e BEST-EFFORT: a licenca ja existe e deve ser devolvida
@@ -132,8 +151,8 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     await licenseEvent({
       licenseId: lic.id, tenantId: tid, event: "issued",
       actorEmail: actor?.email,
-      after: { plan_id: planId, billing_type: billingType, billing_cycle: cycle, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
-      note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType}/${cycle})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
+      after: { plan_id: planId, billing_type: billingType, billing_cycle: cycle, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version, client_quota: licQuota, custom_price_cents: hasCustomPrice ? cpcNum : null },
+      note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType}/${cycle})${hasCustomQuota ? ` · cota personalizada: ${cqNum} clientes` : ""}${hasCustomPrice ? ` · valor: R$ ${(cpcNum / 100).toFixed(2)}` : ""}${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
     });
   } catch (e) { console.error("[issueLicense] licenseEvent nao-fatal:", e?.message || e); }
 

@@ -326,6 +326,15 @@
           <input id="e_dueday" type="number" min="1" max="28" placeholder="ex.: 10">
         </div>
       </div>
+      <div class="row c2 hide" id="e_custom_wrap">
+        <div class="field"><label>Qtd. de clientes (personalizada) *</label>
+          <input id="e_quota" type="number" min="1" max="100000" placeholder="ex.: 200">
+        </div>
+        <div class="field" id="e_price_wrap"><label>Valor (R$, opcional)</label>
+          <input id="e_price" type="number" min="0" step="0.01" placeholder="ex.: 1200.00">
+          <div class="small muted">Módulo <b>Personalizado</b>: você define o limite de clientes e o valor combinado. O limite é aplicado automaticamente (trava o cadastro acima da cota).</div>
+        </div>
+      </div>
       <div class="field hide" id="e_reason_wrap"><label>Motivo da cortesia (controle)</label>
         <input id="e_reason" placeholder="Ex.: parceria, teste estendido, cliente vitalício, brinde de campanha…">
         <div class="small muted">Toda licença gerada — paga ou cortesia — recebe nº de controle e fica registrada na auditoria.</div>

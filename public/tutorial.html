@@ -52,7 +52,7 @@
 <main class="wrap section-pad">
 <div class="doc">
   <h1 id="topo">Tutorial operacional do dono — vendas e gestão</h1>
-  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.4</b>).
+  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.7</b>).
      Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
      <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
      <b>Integrações (NFS-e)</b>, cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
@@ -83,7 +83,7 @@
 
   <!-- 1 -->
   <h2 id="painel">1. Visão geral do painel</h2>
-  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.4</span> ao lado do menu.</p>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.7</span> ao lado do menu.</p>
   <ul>
     <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
     <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
@@ -129,12 +129,14 @@
   <h2 id="emitir">4. Emitir licença manualmente (venda assistida)</h2>
   <div class="step"><div class="n">1</div><div>Clique em <span class="btnref">+ Emitir licença</span> (topo do <span class="tab">Painel</span> ou na aba <span class="tab">Licenças</span>).</div></div>
   <div class="step"><div class="n">2</div><div>Preencha <b>Nome do cliente</b> (obrigatório), CNPJ/CPF, E-mail e WhatsApp. O campo de documento aceita <b>CNPJ (14 dígitos) ou CPF (11 dígitos)</b> — digite e clique em <span class="btnref">Buscar</span>: com <b>CNPJ</b>, a plataforma consulta a base pública e preenche <b>nome/e-mail/telefone</b> automaticamente; com <b>CPF</b>, ela aceita o número e avisa para preencher os dados à mão (não existe base pública de CPF). A busca tem tempo-limite e <b>nunca trava a tela</b> — se a base estiver fora do ar, você simplesmente completa manualmente.</div></div>
-  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e o <b>Tipo de licença</b>. O seletor de módulo já mostra o <b>preço mensal real de cada plano</b> <span class="new">NOVO</span> (Básico, Intermediário e Avançado) ao lado do nome — não aparece mais “R$ 0,00/mês”.
+  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e o <b>Tipo de licença</b>. O seletor de módulo já mostra o <b>preço mensal real de cada plano</b> ao lado do nome — não aparece mais “R$ 0,00/mês”. As <b>capacidades por módulo</b> <span class="new">ATUALIZADO</span> são: <b>Básico até 25</b>, <b>Intermediário até 50</b> e <b>Avançado até 100</b> clientes/empresas.
     <ul style="margin:6px 0 0 16px">
       <li><b>Paga (com cobrança)</b> — define a <b>Cobrança</b>: Avulsa (bloqueia no vencimento) ou Recorrente (renova automático, −5%). Escolha esta opção quando houver <b>faturamento</b>.</li>
-      <li><b>Cortesia — avulsa SEM custo</b> <span class="new">NOVO</span> — gera a licença <b>gratuita</b> (parceria, teste estendido, brinde, cliente vitalício). Informe a <b>Validade em dias</b> (padrão 365) e o <b>Motivo da cortesia</b> (obrigatório, para controle).</li>
+      <li><b>Cortesia — avulsa SEM custo</b> — gera a licença <b>gratuita</b> (parceria, teste estendido, brinde, cliente vitalício). Informe a <b>Validade em dias</b> (padrão 365) e o <b>Motivo da cortesia</b> (obrigatório, para controle).</li>
+      <li><b>Personalizado</b> <span class="new">NOVO</span> — ao escolher o módulo <b>Personalizado</b>, aparecem dois campos próprios: <b>Qtd. de clientes</b> (você define o limite sob medida — ex.: 200) e <b>Valor (R$)</b> (o valor combinado, opcional/informativo). O limite definido é <b>aplicado automaticamente</b>: o ambiente do cliente trava o cadastro acima da cota, igual aos demais módulos. Útil para acordos fora da tabela padrão.</li>
     </ul>
-    <div class="note" style="margin-top:8px">A diferença entre os dois tipos fica <b>explícita na tela</b>: <b>Paga</b> abre os campos de cobrança; <b>Cortesia</b> abre validade + motivo. Assim você nunca emite uma cobrança sem querer (nem deixa de cobrar quando deveria).</div>
+    <div class="step" style="margin-top:8px"><div class="n">3b</div><div><b>Validade / vencimento</b> — escolha <b>Mensal (30 dias)</b>, <b>Anual (1 ano, com desconto)</b> ou <b>Personalizada (escolher dias)</b>. Para mensal/anual você pode informar o <b>Dia de vencimento (1–28)</b>; para personalizada, a <b>quantidade de dias</b>. A licença avulsa <b>bloqueia automaticamente no vencimento</b> (com aviso 3 dias antes e período de carência) — tudo gerido pelo robô diário de cobrança.</div></div>
+    <div class="note" style="margin-top:8px">A tela se ajusta ao que você escolhe: <b>Paga</b> abre os campos de cobrança; <b>Cortesia</b> abre validade + motivo; <b>Personalizado</b> abre quantidade de clientes + valor. Assim você nunca emite uma cobrança sem querer (nem deixa de cobrar quando deveria).</div>
   </div>
   <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Nº da licença</b> (ex.: <code>DPO-L-2026-1001</code>), um <b>selo Paga/Cortesia</b>, o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
   <div class="note ok"><b>Controle total de cada licença</b> <span class="new">NOVO</span> — toda licença gerada (paga ou cortesia) recebe <b>número sequencial</b> + <b>versão</b> e fica registrada na <span class="tab">Auditoria</span>. Na lista de <span class="tab">Licenças</span> cada linha mostra o selo <b>Paga</b> ou <b>Cortesia</b> (com o motivo no “Gerenciar”), permitindo distinguir vendas de brindes a qualquer momento.</div>
@@ -307,7 +309,7 @@
     <li><b>Trava por inatividade <span class="new">NOVO</span>:</b> após <b>20 minutos parado</b> (sem mouse, teclado, toque ou rolagem), a tela é <b>bloqueada</b> e a sessão encerrada, exigindo <b>novo login</b> — vale para o <b>seu Painel</b> e para o <b>ambiente dos assinantes</b>, em <b>desktop e celular</b>. A demonstração pública não expira por inatividade.</li>
     <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
     <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
-    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.4</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.7</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
   </ul>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
@@ -344,7 +346,7 @@
   </ol>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.4.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.7.</p>
 </div>
 </main>
 </body>

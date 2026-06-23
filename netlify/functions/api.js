@@ -97,9 +97,9 @@ export default async function handler(req) {
 // =====================================================================
 async function listPlans() {
   const rows = await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features
-                         FROM plans WHERE active AND id <> 'owner' ORDER BY tier`,
+                         FROM plans WHERE active AND id NOT IN ('owner','custom') ORDER BY tier`,
     await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, features
-                         FROM plans WHERE active AND id <> 'owner' ORDER BY tier`, []));
+                         FROM plans WHERE active AND id NOT IN ('owner','custom') ORDER BY tier`, []));
   // Reserva de preco anual quando a coluna ainda nao migrou: mensal*12*0.85 (15% off).
   const plans = (rows || []).map((p) => ({
     ...p,
@@ -544,10 +544,19 @@ async function ownerRoutes(req, user, seg, method) {
     const term = ["monthly", "annual", "custom"].includes(b.term) ? b.term : "monthly";
     const dd = parseInt(b.dueDay, 10);
     const dueDayVal = (Number.isFinite(dd) && dd >= 1 && dd <= 28) ? dd : null;
+    // Plano "Personalizado": o dono define a quantidade de clientes e o valor.
+    // customQuota (>0) e customPrice (R$, convertido p/ centavos) so valem para 'custom'.
+    const planId = b.planId || "basic";
+    const isCustomPlan = planId === "custom";
+    const cq = parseInt(b.customQuota, 10);
+    const customQuota = (isCustomPlan && Number.isFinite(cq) && cq > 0) ? cq : null;
+    if (isCustomPlan && !customQuota) return fail("Plano Personalizado: informe a quantidade de clientes (maior que zero).");
+    const cpReais = parseFloat(String(b.customPrice).replace(",", "."));
+    const customPriceCents = (isCustomPlan && !isFree && Number.isFinite(cpReais) && cpReais >= 0) ? Math.round(cpReais * 100) : null;
     const res = await L.issueLicense({
       tenantId: b.tenantId || null,
       tenant: b.tenant || null,
-      planId: b.planId || "basic",
+      planId,
       // Cortesia (sem custo) nao tem cobranca recorrente: forca avulsa por validade.
       billingType: isFree ? "monthly" : (b.billingType || "monthly"),
       billingCycle: term,
@@ -556,13 +565,15 @@ async function ownerRoutes(req, user, seg, method) {
       validDays: b.validDays || null,
       validUntil: b.validUntil || null,
       dueDay: dueDayVal,
+      customQuota,
+      customPriceCents,
       actor: user,
     });
     // AUTO-CRM + auditoria: efeitos colaterais BEST-EFFORT. A licenca ja foi
     // emitida e o link/mensagem DEVEM ser devolvidos mesmo que o CRM ou o log
     // falhem — nada pode impedir a geracao da licenca ("sem impedimento de dados").
-    await safe(crmEnsureClientFromTenant(res.license.tenant_id, b.planId || "basic", "emissao_manual"), null);
-    await safe(audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId: b.planId, license_no: res.license.license_no, pricing: res.license.pricing, reason: b.reason || null } }), null);
+    await safe(crmEnsureClientFromTenant(res.license.tenant_id, planId, "emissao_manual"), null);
+    await safe(audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId, license_no: res.license.license_no, pricing: res.license.pricing, reason: b.reason || null, customQuota, customPriceCents } }), null);
     return ok({
       license: res.license, plan: res.plan,
       link: res.link, message: res.message,
