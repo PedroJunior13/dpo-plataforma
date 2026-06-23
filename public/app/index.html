@@ -5478,11 +5478,20 @@ async function renderSupportView(scope){
     else { const sc=el("sup-client"); const v=sc?sc.value:""; if(v){ const c=DB.clients.find(x=>String(x.id)===String(v)); if(c){ origin="cliente"; client_ref=String(c.id); client_name=c.trade_name||c.name; client_cnpj=c.cnpj||null; } } }
     const btn=el("sup-send"); btn.disabled=true; const old=btn.textContent; btn.textContent="Enviando…";
     try{
+      // ⚠ ANEXO NUNCA viaja junto da criacao do chamado. Primeiro abrimos o chamado
+      // (requisicao leve = sempre rapida, jamais HTTP 502); depois, se houver arquivo,
+      // enviamos o anexo em uma 2a requisicao DEDICADA. Se o anexo falhar, o chamado
+      // ja esta aberto e avisamos com clareza — o envio principal nunca e perdido.
       let attachment=null; const f=el("sup-file").files&&el("sup-file").files[0];
       if(f){ if(f.size>2*1024*1024){ btn.disabled=false; btn.textContent=old; return toast("Anexo acima de 2 MB. Escolha um arquivo menor.",true); }
         attachment={name:f.name,type:f.type||"application/octet-stream",data:await supFileToB64(f)}; }
-      const body=JSON.stringify({name:(el("sup-name").value||"").trim(),category:el("sup-cat").value,priority:el("sup-prio").value,subject,description,attachment,origin,client_ref,client_name,client_cnpj});
+      const body=JSON.stringify({name:(el("sup-name").value||"").trim(),category:el("sup-cat").value,priority:el("sup-prio").value,subject,description,origin,client_ref,client_name,client_cnpj});
       const res=await supApi("",{method:"POST",body});
+      if(attachment&&res&&res.id){
+        btn.textContent="Enviando anexo…";
+        try{ await supApi("/"+encodeURIComponent(res.id)+"/attachment",{method:"POST",body:JSON.stringify({attachment})}); }
+        catch(ae){ toast("Chamado #"+res.ticketNo+" aberto, mas o anexo não pôde ser enviado agora. Você pode anexá-lo respondendo ao chamado.",true); go(SUP_LIST_VIEW); return; }
+      }
       toast("Chamado #"+res.ticketNo+" aberto! Nossa equipe foi notificada.");
       go(SUP_LIST_VIEW);
     }catch(e){ btn.disabled=false; btn.textContent=old; toast(e.message||"Não foi possível abrir o chamado.",true); }
@@ -5543,10 +5552,17 @@ async function supOpenTicket(id){
     if(!body)return toast("Escreva sua mensagem.",true);
     rs.disabled=true; const old=rs.textContent; rs.textContent="Enviando…";
     try{
+      // Mesma estrategia da abertura: a resposta vai primeiro (leve, sem 502) e o
+      // anexo segue numa 2a requisicao dedicada — se o anexo falhar, a resposta ja foi gravada.
       let attachment=null; const fEl=el("sup-reply-file"); const f=fEl&&fEl.files&&fEl.files[0];
       if(f){ if(f.size>2*1024*1024){ rs.disabled=false; rs.textContent=old; return toast("Anexo acima de 2 MB. Escolha um arquivo menor.",true); }
         attachment={name:f.name,type:f.type||"application/octet-stream",data:await supFileToB64(f)}; }
-      await supApi("/"+encodeURIComponent(id)+"/reply",{method:"POST",body:JSON.stringify({body,attachment})});
+      const rr=await supApi("/"+encodeURIComponent(id)+"/reply",{method:"POST",body:JSON.stringify({body})});
+      if(attachment&&rr&&rr.messageId){
+        rs.textContent="Enviando anexo…";
+        try{ await supApi("/"+encodeURIComponent(id)+"/messages/"+encodeURIComponent(rr.messageId)+"/attachment",{method:"POST",body:JSON.stringify({attachment})}); }
+        catch(ae){ toast("Resposta enviada, mas o anexo não pôde ser enviado agora. Tente anexá-lo em uma nova resposta.",true); supOpenTicket(id); return; }
+      }
       toast("Resposta enviada."); supOpenTicket(id);
     }catch(e){ rs.disabled=false; rs.textContent=old; toast(e.message||"Não foi possível enviar.",true); }
   };

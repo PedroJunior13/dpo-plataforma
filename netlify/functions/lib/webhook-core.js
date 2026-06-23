@@ -5,10 +5,15 @@ import { licenseEvent } from "./audit.js";
 import { sendEmail } from "./notify.js";
 import * as nfse from "./nfse.js";
 
-// Estende a janela paga em 1 mes a partir de agora (ou do fim atual).
-function nextPeriodEnd(currentEnd) {
+// Estende a janela paga conforme o CICLO (1 mes ou 1 ano) a partir de agora
+// (ou do fim atual). Se houver dia de vencimento escolhido (1-28), ajusta a data.
+function nextPeriodEnd(currentEnd, cycle, dueDay) {
   const base = currentEnd && new Date(currentEnd) > new Date() ? new Date(currentEnd) : new Date();
-  const d = new Date(base); d.setMonth(d.getMonth() + 1);
+  const d = new Date(base);
+  if (cycle === "annual") d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  const dd = parseInt(dueDay, 10);
+  if (Number.isFinite(dd) && dd >= 1 && dd <= 28) d.setDate(dd);
   return d.toISOString();
 }
 
@@ -18,7 +23,7 @@ export async function onPaymentApproved({ tenantId, gateway, gatewayPaymentId, a
   if (!tenant) { console.warn("[webhook] tenant nao encontrado", tenantId); return; }
 
   const sub = await one(sql`SELECT * FROM subscriptions WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
-  const periodEnd = nextPeriodEnd(sub?.current_period_end);
+  const periodEnd = nextPeriodEnd(sub?.current_period_end, sub?.billing_cycle, sub?.due_day);
 
   // Registra/atualiza pagamento
   const pay = await one(sql`

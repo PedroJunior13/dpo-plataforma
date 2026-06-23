@@ -61,6 +61,40 @@ export default async function handler() {
     }
   }
 
+  // 3b) Licencas AVULSAS por validade (valid_until) SEM assinatura recorrente —
+  //     ex.: emitidas pelo dono (mensal/anual/cortesia/personalizada). O kill-switch
+  //     (checkAccess) ja barra no login; aqui refletimos o bloqueio tambem no
+  //     status do tenant/licenca para a gestao no painel e os alertas por e-mail.
+  let warnedAvu = 0, blockedAvu = 0;
+  const avu = await sql`
+    SELECT l.id AS lic_id, l.valid_until, t.id AS tenant_id, t.name, t.email, t.status
+    FROM licenses l JOIN tenants t ON t.id = l.tenant_id
+    WHERE t.is_owner = FALSE AND COALESCE(t.is_demo,FALSE) = FALSE
+      AND l.status = 'active' AND l.valid_until IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.current_period_end IS NOT NULL)`;
+  for (const l of avu) {
+    const end = new Date(l.valid_until).getTime();
+    const daysToEnd = Math.ceil((end - now) / 864e5);
+    const overdueDays = Math.floor((now - end) / 864e5);
+    if (daysToEnd === 3 && l.status === "active" && l.email) {
+      await sendEmail({ tenantId: l.tenant_id, to: l.email, type: "expiring",
+        subject: "Sua licenca vence em 3 dias — DPO PJ Protection",
+        html: `<p>Sua licenca vence em <b>${new Date(end).toLocaleDateString("pt-BR")}</b>. Renove para manter o acesso.</p>` });
+      warnedAvu++;
+    }
+    if (overdueDays >= GRACE_DAYS && ["active", "grace"].includes(l.status)) {
+      await sql`UPDATE tenants SET status='blocked', updated_at=now() WHERE id=${l.tenant_id}`;
+      await sql`UPDATE licenses SET status='suspended', version=version+1, updated_at=now() WHERE id=${l.lic_id}`;
+      await licenseEvent({ licenseId: l.lic_id, tenantId: l.tenant_id, event: "suspended", actorEmail: "system", note: `Bloqueio automatico por vencimento da licenca avulsa (${overdueDays} dias).` });
+      await audit({ tenantId: l.tenant_id, actorEmail: "system", action: "auto_blocked", detail: { overdueDays, kind: "avulsa" } });
+      if (l.email) await sendEmail({ tenantId: l.tenant_id, to: l.email, type: "blocked",
+        subject: "Acesso suspenso — DPO PJ Protection",
+        html: `<p>Seu acesso foi suspenso por vencimento da licenca. Assim que regularizar, a reativacao e automatica.</p>` });
+      blockedAvu++;
+    }
+  }
+  warned += warnedAvu; blocked += blockedAvu;
+
   // 4) Atualiza NFS-e em processamento (best-effort)
   try {
     const nfse = await import("./lib/nfse.js");

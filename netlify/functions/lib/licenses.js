@@ -49,7 +49,7 @@ async function nextLicenseNo() {
 // ---------------------------------------------------------------
 //  Emissao de licenca (cria tenant se necessario)
 // ---------------------------------------------------------------
-export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", pricing = null, reason = null, validDays = null, subscriptionId = null, validUntil = null, actor }) {
+export async function issueLicense({ tenantId = null, tenant = null, planId, billingType = "monthly", billingCycle = "monthly", pricing = null, reason = null, validDays = null, subscriptionId = null, validUntil = null, dueDay = null, actor }) {
   const plan = await one(sql`SELECT * FROM plans WHERE id=${planId}`);
   if (!plan) throw new Error("Plano inexistente.");
 
@@ -71,19 +71,30 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     await sql`UPDATE tenants SET plan_id=${planId}, updated_at=now() WHERE id=${tid}`;
   }
 
-  // valid_until:
-  //  - cortesia (free): +validDays (padrao 365) se nao informado;
-  //  - avulso pago (monthly): +30 dias se nao informado;
-  //  - recorrente: segue a assinatura (sem data fixa).
+  // valid_until — depende do CICLO escolhido (mensal / anual / personalizado):
+  //  - cortesia (free): mensal=30d, anual=365d, custom=validDays (padrao 365);
+  //  - avulso pago (monthly): mensal=30d, anual=365d, custom=validDays (padrao 30);
+  //  - recorrente: segue a assinatura (sem data fixa — webhook define o periodo).
+  // Quando dueDay (1-28) e informado, o vencimento cai nesse dia do mes alvo.
+  const cycle = (billingCycle === "annual" || billingCycle === "custom") ? billingCycle : "monthly";
+  const withDueDay = (iso) => {
+    const dd = parseInt(dueDay, 10);
+    if (!iso || !(Number.isFinite(dd) && dd >= 1 && dd <= 28)) return iso;
+    const d = new Date(iso); d.setDate(dd); return d.toISOString();
+  };
   let vu = validUntil;
   if (!vu) {
+    let days = null;
     if (price === "free") {
       const d = parseInt(validDays, 10);
-      const days = Number.isFinite(d) && d > 0 ? d : 365;
-      vu = new Date(Date.now() + days * 864e5).toISOString();
+      days = cycle === "annual" ? 365 : cycle === "custom" ? (Number.isFinite(d) && d > 0 ? d : 365) : 30;
     } else if (billingType === "monthly") {
-      vu = new Date(Date.now() + 30 * 864e5).toISOString();
+      const d = parseInt(validDays, 10);
+      days = cycle === "annual" ? 365 : cycle === "custom" ? (Number.isFinite(d) && d > 0 ? d : 30) : 30;
     }
+    if (days != null) vu = withDueDay(new Date(Date.now() + days * 864e5).toISOString());
+  } else {
+    vu = withDueDay(vu);
   }
 
   // Numero/codigo legivel e sequencial da licenca (DPO-L-{ANO}-{0001}).
@@ -97,9 +108,9 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
   let lic;
   try {
     lic = await one(sql`
-      INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason)
+      INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason, billing_cycle)
       VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
-              'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason})
+              'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason}, ${cycle})
       RETURNING *`);
   } catch (e) {
     console.error("[issueLicense] INSERT completo falhou, usando fallback base:", e?.message || e);
@@ -111,6 +122,7 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     try { await sql`UPDATE licenses SET license_no=${licenseNo}     WHERE id=${lic.id}`; lic.license_no = licenseNo; } catch {}
     try { await sql`UPDATE licenses SET pricing=${price}            WHERE id=${lic.id}`; lic.pricing = price; } catch {}
     try { await sql`UPDATE licenses SET issue_reason=${issueReason} WHERE id=${lic.id}`; lic.issue_reason = issueReason; } catch {}
+    try { await sql`UPDATE licenses SET billing_cycle=${cycle}      WHERE id=${lic.id}`; lic.billing_cycle = cycle; } catch {}
   }
 
   // Registro de evento e BEST-EFFORT: a licenca ja existe e deve ser devolvida
@@ -120,8 +132,8 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
     await licenseEvent({
       licenseId: lic.id, tenantId: tid, event: "issued",
       actorEmail: actor?.email,
-      after: { plan_id: planId, billing_type: billingType, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
-      note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
+      after: { plan_id: planId, billing_type: billingType, billing_cycle: cycle, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
+      note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType}/${cycle})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
     });
   } catch (e) { console.error("[issueLicense] licenseEvent nao-fatal:", e?.message || e); }
 

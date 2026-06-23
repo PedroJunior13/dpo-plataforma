@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS plans (
   active                 BOOLEAN NOT NULL DEFAULT TRUE,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Preco ANUAL (centavos): compra de 12 meses com desconto (padrao ~15% off).
+-- Quando 0/NULL, o backend calcula price_month_cents*12*0.85 como reserva.
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS price_annual_cents INT NOT NULL DEFAULT 0;
 
 -- =====================================================================
 --  2) TENANTS (assinantes: consultores/empresas). O dono tambem e um tenant.
@@ -87,6 +90,11 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_subs_tenant ON subscriptions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_subs_period_end ON subscriptions(current_period_end);
+-- Ciclo de cobranca (duracao do periodo): 'monthly' (30 dias) | 'annual' (1 ano).
+-- Determina o valor (mensal x anual com desconto) e quanto renovar a cada pagamento.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly';
+-- Dia de vencimento escolhido pelo cliente na compra (1-28). NULL = usa a data do pagamento.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS due_day INT;
 
 -- =====================================================================
 --  5) LICENCAS (uma por compra; chave de ativacao; vinculo ao modulo)
@@ -120,6 +128,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_lic_no ON licenses(license_no);
 -- Toda licenca emitida tem controle: numero (license_no) + versao + tipo + motivo.
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS pricing TEXT NOT NULL DEFAULT 'paid';
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS issue_reason TEXT;
+-- Ciclo da licenca (informativo/gestao): 'monthly' | 'annual' | 'custom'. A trava real
+-- usa valid_until (avulso) ou a assinatura (recorrente); este campo documenta a escolha.
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS billing_cycle TEXT;
 
 -- =====================================================================
 --  6) AUDITORIA DE LICENCAS (append-only, imutavel, versionado)
@@ -306,19 +317,20 @@ CREATE TABLE IF NOT EXISTS document_versions (
 --  SEEDS
 -- =====================================================================
 -- Planos (preco recorrente = mensal * 0.95, conforme regra de 5% off)
-INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, features) VALUES
- ('basic', 'Basico',         1, 25,  35000, 33250,
+-- price_annual_cents = mensal * 12 * 0.85 (15% de desconto na compra anual).
+INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features) VALUES
+ ('basic', 'Basico',         1, 25,  35000, 33250, 357000,
    '["Gestao de ate 25 clientes","Solicitacoes de titulares (art. 18 LGPD)","Registro e tratativa de incidentes","Documentos versionados (LGPD/GDPR)","Selo de compliance & paginas publicas","Bilingue PT/EN · desktop e mobile","Suporte por e-mail"]'),
- ('inter', 'Intermediario',  2, 100, 50000, 47500,
+ ('inter', 'Intermediario',  2, 100, 50000, 47500, 510000,
    '["Tudo do modulo Basico","Gestao de ate 100 clientes","Projetos e fases com Gantt","Tarefas por fase do projeto","Treinamentos & certificados verificaveis","Alerta de cronograma (prazos de adequacao)","Suporte prioritario"]'),
- ('adv',   'Avancado',       3, 150, 80000, 76000,
+ ('adv',   'Avancado',       3, 150, 80000, 76000, 816000,
    '["Tudo do modulo Intermediario","Gestao de ate 150 clientes","Equipe com acesso por cliente (menor privilegio)","Marca da consultoria nos relatorios","Suporte dedicado & onboarding assistido"]'),
- ('owner', 'Dono da Plataforma', 99, NULL, 0, 0,
+ ('owner', 'Dono da Plataforma', 99, NULL, 0, 0, 0,
    '["Ambiente administrativo","Cadastro ilimitado de clientes para consultoria","Gestao de licencas e tenants","Auditoria global"]')
 ON CONFLICT (id) DO UPDATE SET
   name=EXCLUDED.name, tier=EXCLUDED.tier, client_quota=EXCLUDED.client_quota,
   price_month_cents=EXCLUDED.price_month_cents, price_recurring_cents=EXCLUDED.price_recurring_cents,
-  features=EXCLUDED.features;
+  price_annual_cents=EXCLUDED.price_annual_cents, features=EXCLUDED.features;
 
 -- Tenant do dono (ambiente administrativo + consultoria ilimitada)
 INSERT INTO tenants (id, name, email, plan_id, status, is_owner)

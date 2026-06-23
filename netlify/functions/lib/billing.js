@@ -31,11 +31,12 @@ const mp = {
     return data;
   },
 
-  // Pagamento avulso (mensal): PIX/boleto/cartao via Checkout Pro (preference).
-  async createMonthly({ tenant, plan, amountCents, method }) {
+  // Pagamento avulso (mensal OU anual): PIX/boleto/cartao via Checkout Pro (preference).
+  async createMonthly({ tenant, plan, amountCents, method, cycle }) {
+    const cycleLabel = cycle === "annual" ? "anual" : "mensal";
     const pref = await this.call("/checkout/preferences", "POST", {
       items: [{
-        title: `DPO PJ Protection — ${plan.name} (mensal)`,
+        title: `DPO PJ Protection — ${plan.name} (${cycleLabel})`,
         quantity: 1, currency_id: "BRL", unit_price: reais(amountCents),
       }],
       payer: { email: tenant.email || undefined, name: tenant.name || undefined },
@@ -52,15 +53,16 @@ const mp = {
     return { gateway: "mercadopago", checkoutUrl: pref.init_point, gatewayRef: pref.id, raw: pref };
   },
 
-  // Assinatura recorrente (preapproval) — renova automaticamente.
-  async createRecurring({ tenant, plan, amountCents }) {
+  // Assinatura recorrente (preapproval) — renova automaticamente (mensal ou anual).
+  async createRecurring({ tenant, plan, amountCents, cycle }) {
+    const annual = cycle === "annual";
     const pre = await this.call("/preapproval", "POST", {
-      reason: `DPO PJ Protection — ${plan.name} (recorrente)`,
+      reason: `DPO PJ Protection — ${plan.name} (recorrente ${annual ? "anual" : "mensal"})`,
       external_reference: tenant.id,
       payer_email: tenant.email || undefined,
       back_url: `${APP}/checkout-ok`,
       auto_recurring: {
-        frequency: 1, frequency_type: "months",
+        frequency: annual ? 12 : 1, frequency_type: "months",
         transaction_amount: reais(amountCents), currency_id: "BRL",
       },
       status: "pending",
@@ -96,11 +98,11 @@ const stripe = {
     return data;
   },
 
-  async createMonthly({ tenant, plan, amountCents }) {
+  async createMonthly({ tenant, plan, amountCents, cycle }) {
     const s = await this.call("/checkout/sessions", "POST", {
       mode: "payment",
       "line_items[0][price_data][currency]": "brl",
-      "line_items[0][price_data][product_data][name]": `DPO PJ Protection — ${plan.name} (mensal)`,
+      "line_items[0][price_data][product_data][name]": `DPO PJ Protection — ${plan.name} (${cycle === "annual" ? "anual" : "mensal"})`,
       "line_items[0][price_data][unit_amount]": amountCents,
       "line_items[0][quantity]": 1,
       client_reference_id: tenant.id,
@@ -111,13 +113,13 @@ const stripe = {
     return { gateway: "stripe", checkoutUrl: s.url, gatewayRef: s.id, raw: s };
   },
 
-  async createRecurring({ tenant, plan, amountCents }) {
+  async createRecurring({ tenant, plan, amountCents, cycle }) {
     const s = await this.call("/checkout/sessions", "POST", {
       mode: "subscription",
       "line_items[0][price_data][currency]": "brl",
-      "line_items[0][price_data][product_data][name]": `DPO PJ Protection — ${plan.name} (recorrente)`,
+      "line_items[0][price_data][product_data][name]": `DPO PJ Protection — ${plan.name} (recorrente ${cycle === "annual" ? "anual" : "mensal"})`,
       "line_items[0][price_data][unit_amount]": amountCents,
-      "line_items[0][price_data][recurring][interval]": "month",
+      "line_items[0][price_data][recurring][interval]": cycle === "annual" ? "year" : "month",
       "line_items[0][quantity]": 1,
       client_reference_id: tenant.id,
       customer_email: tenant.email || undefined,
@@ -150,14 +152,14 @@ const pagarme = {
     return data;
   },
 
-  async createMonthly({ tenant, plan, amountCents, method }) {
+  async createMonthly({ tenant, plan, amountCents, method, cycle }) {
     const payments = method === "pix"
       ? [{ payment_method: "pix", pix: { expires_in: 3600 } }]
       : method === "boleto"
       ? [{ payment_method: "boleto", boleto: { instructions: "Pagar ate o vencimento." } }]
       : [{ payment_method: "credit_card" }];
     const order = await this.call("/orders", "POST", {
-      items: [{ amount: amountCents, description: `${plan.name} (mensal)`, quantity: 1 }],
+      items: [{ amount: amountCents, description: `${plan.name} (${cycle === "annual" ? "anual" : "mensal"})`, quantity: 1 }],
       customer: { name: tenant.name || "Cliente", email: tenant.email || "sem@email.com" },
       payments,
       code: tenant.id,
@@ -167,13 +169,14 @@ const pagarme = {
     return { gateway: "pagarme", checkoutUrl: url, gatewayRef: order.id, raw: order };
   },
 
-  async createRecurring({ tenant, plan, amountCents }) {
+  async createRecurring({ tenant, plan, amountCents, cycle }) {
+    const annual = cycle === "annual";
     const sub = await this.call("/subscriptions", "POST", {
       payment_method: "credit_card",
-      interval: "month", interval_count: 1,
+      interval: annual ? "year" : "month", interval_count: 1,
       billing_type: "prepaid",
       customer: { name: tenant.name || "Cliente", email: tenant.email || "sem@email.com" },
-      items: [{ description: `${plan.name} (recorrente)`, quantity: 1, pricing_scheme: { price: amountCents } }],
+      items: [{ description: `${plan.name} (recorrente ${annual ? "anual" : "mensal"})`, quantity: 1, pricing_scheme: { price: amountCents } }],
       code: tenant.id,
     });
     return { gateway: "pagarme", checkoutUrl: sub?.url || null, gatewaySubscriptionId: sub.id, raw: sub };
@@ -198,9 +201,10 @@ export function availableGateways() {
 }
 
 // Cria a cobranca/assinatura e devolve a URL de checkout para o cliente.
-export async function createCharge({ gateway, billingType, method, tenant, plan, amountCents }) {
+export async function createCharge({ gateway, billingType, billingCycle, method, tenant, plan, amountCents }) {
   const g = gatewayFor(gateway);
   if (!g.enabled()) throw new Error(`Gateway ${gateway} sem credenciais configuradas.`);
-  if (billingType === "recurring") return g.createRecurring({ tenant, plan, amountCents });
-  return g.createMonthly({ tenant, plan, amountCents, method });
+  const cycle = billingCycle === "annual" ? "annual" : "monthly";
+  if (billingType === "recurring") return g.createRecurring({ tenant, plan, amountCents, cycle });
+  return g.createMonthly({ tenant, plan, amountCents, method, cycle });
 }

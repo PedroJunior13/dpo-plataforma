@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.8.5";
+  const PLATFORM_VERSION = "2.8.6";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -300,21 +300,30 @@
     }).join("");
     ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
     if ($("#e_validdays")) $("#e_validdays").value = "";
+    if ($("#e_dueday")) $("#e_dueday").value = "";
+    if ($("#e_term")) $("#e_term").value = "monthly";
     if ($("#e_pricing")) $("#e_pricing").value = "paid";
     syncPricingFields();
     $("#emitForm").classList.remove("hide");
     $("#emitResult").classList.add("hide");
     openModal("modalEmitir");
   }
-  // Alterna campos conforme o tipo: cortesia esconde "Cobrança" e mostra validade + motivo.
+  // Alterna campos conforme tipo + termo de validade:
+  //  - Cortesia (free): esconde "Cobrança" e mostra "Motivo".
+  //  - Termo "Personalizada": mostra "Validade (dias)" e esconde "Dia de vencimento".
+  //  - Termo mensal/anual: esconde "dias" e mostra "Dia de vencimento".
   function syncPricingFields() {
     const free = $("#e_pricing") && $("#e_pricing").value === "free";
+    const term = $("#e_term") ? $("#e_term").value : "monthly";
+    const custom = term === "custom";
     const t = (id, on) => { const el = $("#" + id); if (el) el.classList.toggle("hide", !on); };
     t("e_billing_wrap", !free);
-    t("e_validdays_wrap", free);
+    t("e_validdays_wrap", custom);
+    t("e_dueday_wrap", !custom);
     t("e_reason_wrap", free);
   }
   { const ep = $("#e_pricing"); if (ep) ep.addEventListener("change", syncPricingFields); }
+  { const et = $("#e_term"); if (et) et.addEventListener("change", syncPricingFields); }
   $("#btnEmitir").addEventListener("click", openEmitir);
   $("#btnEmitirTop").addEventListener("click", openEmitir);
   $("#btnEmitOutra").addEventListener("click", openEmitir);
@@ -346,13 +355,18 @@
       const pricing = $("#e_pricing") ? $("#e_pricing").value : "paid";
       const free = pricing === "free";
       if (free && !$("#e_reason").value.trim()) { toast("Informe o motivo da cortesia (controle)."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
+      const term = $("#e_term") ? $("#e_term").value : "monthly";
+      if (term === "custom" && !(parseInt($("#e_validdays").value, 10) > 0)) { toast("Informe a validade personalizada em dias."); btn.disabled = false; btn.textContent = "Gerar licença e link"; return; }
+      const dueDay = parseInt($("#e_dueday").value, 10);
       const body = {
         tenant: { name, doc: $("#e_doc").value.trim(), email: $("#e_email").value.trim(), phone: $("#e_phone").value.trim() },
         planId: $("#e_plan").value,
         pricing,
         billingType: free ? "monthly" : $("#e_billing").value,
+        term,
         reason: free ? $("#e_reason").value.trim() : null,
-        validDays: free ? (parseInt($("#e_validdays").value, 10) || null) : null,
+        validDays: term === "custom" ? (parseInt($("#e_validdays").value, 10) || null) : null,
+        dueDay: (term !== "custom" && dueDay >= 1 && dueDay <= 28) ? dueDay : null,
       };
       const r = await api("/owner/licenses", { method: "POST", body: JSON.stringify(body) });
       showEmitResult(r);
@@ -401,6 +415,20 @@
   // ===================================================================
   //  COMPRAS — transações do checkout + gerar licença em 1 clique
   // ===================================================================
+  // Rótulo do ciclo de cobrança (mensal/anual/personalizado/recorrente).
+  function cycleLabel(c) {
+    return c === "annual" ? "Anual" : c === "custom" ? "Personalizada" : c === "monthly" ? "Mensal" : "";
+  }
+  // Selo de vencimento: vencido / vence em X dias / em dia — com cor.
+  function vencBadge(validUntil) {
+    if (!validUntil) return `<span class="small muted">sem data</span>`;
+    const end = new Date(validUntil).getTime();
+    const days = Math.ceil((end - Date.now()) / 864e5);
+    if (days < 0) return `<span class="tag suspended">Vencida há ${Math.abs(days)}d</span>`;
+    if (days <= 7) return `<span class="tag grace">Vence em ${days}d</span>`;
+    return `<span class="tag active">Em dia</span>`;
+  }
+
   async function loadPurchases() {
     const tb = $("#purchRows");
     try {
@@ -418,7 +446,7 @@
           <td class="small">${dtt(p.created_at)}</td>
           <td>${esc(p.tenant_name)}<div class="small muted">${esc(p.tenant_email || "")}${p.tenant_phone ? " · " + esc(p.tenant_phone) : ""}</div></td>
           <td>${esc(p.plan_name || p.plan_id)}<div class="small muted">${p.client_quota == null ? "ilimitado" : p.client_quota + " clientes"}</div></td>
-          <td>${brl(p.amount_cents)}<div class="small muted">${esc(p.billing_type === "recurring" ? "recorrente" : "avulsa")}</div></td>
+          <td>${brl(p.amount_cents)}<div class="small muted">${esc(p.billing_type === "recurring" ? "recorrente" : "avulsa")}${p.billing_cycle ? " · " + esc(cycleLabel(p.billing_cycle)) : ""}${p.due_day ? " · vence dia " + p.due_day : ""}</div></td>
           <td class="small">${esc(p.method || "—")}<div class="small muted">${esc(p.gateway || "")}</div></td>
           <td>${sit}</td>
           <td style="text-align:right">${act}</td>
@@ -472,7 +500,7 @@
         <td>${esc(l.plan_name || l.plan_id)}${priceBadge}</td>
         <td>${activeTag(l)} <span class="small muted">${esc(statusLabel(l.status))}</span></td>
         <td>${l.clients_count ?? 0}${quota != null ? " / " + quota : ""}</td>
-        <td>${dt(l.valid_until)}</td>
+        <td>${dt(l.valid_until)}<div class="small muted">${vencBadge(l.valid_until)}${l.billing_cycle ? " · " + esc(cycleLabel(l.billing_cycle)) : ""}</div></td>
         <td style="text-align:right"><button class="btn sm gold" data-manage="${esc(l.id)}">Gerenciar</button></td>
       </tr>`;
     }).join("");
@@ -494,7 +522,7 @@
         <div class="it"><div class="k">Licença</div><div class="v">${tag(l.status)} <span class="small muted">${l.license_no ? esc(l.license_no) + " · " : ""}v${l.version}</span></div></div>
         <div class="it"><div class="k">Tipo</div><div class="v">${(l.pricing || "paid") === "free" ? `<span class="tag issued">Cortesia</span>${l.issue_reason ? ` <span class="small muted">${esc(l.issue_reason)}</span>` : ""}` : `<span class="tag active">Paga</span>`}</div></div>
         <div class="it"><div class="k">Clientes</div><div class="v">${l.clients_count ?? 0}${quota != null ? " / " + quota : " / ∞"}</div></div>
-        <div class="it"><div class="k">Validade</div><div class="v">${dt(l.valid_until)}</div></div>
+        <div class="it"><div class="k">Validade</div><div class="v">${dt(l.valid_until)} ${vencBadge(l.valid_until)}${l.billing_cycle ? ` <span class="small muted">${esc(cycleLabel(l.billing_cycle))}</span>` : ""}</div></div>
       </div>
 
       <h3 style="margin-top:14px">Suporte — acessar e resolver no perfil do cliente</h3>
@@ -1037,13 +1065,20 @@
       if (!body) return toast("Escreva a resposta.");
       const btn = $("#tk_send"); btn.disabled = true;
       try {
+        // Anexo NUNCA viaja junto da resposta: envia-se a resposta primeiro (leve,
+        // sem risco de HTTP 502) e, se houver arquivo, ele segue em 2a requisicao
+        // dedicada. Se o anexo falhar, a resposta ja foi gravada e o cliente avisado.
         let attachment = null;
         const fEl = $("#tk_file"); const f = fEl && fEl.files && fEl.files[0];
         if (f) {
           if (f.size > 2 * 1024 * 1024) { btn.disabled = false; return toast("Anexo acima de 2 MB. Escolha um arquivo menor."); }
           attachment = { name: f.name, type: f.type || "application/octet-stream", data: await fileToB64(f) };
         }
-        await api("/owner/support/tickets/" + encodeURIComponent(id) + "/reply", { method: "POST", body: JSON.stringify({ body, status: $("#tk_repst").value, attachment }) });
+        const rr = await api("/owner/support/tickets/" + encodeURIComponent(id) + "/reply", { method: "POST", body: JSON.stringify({ body, status: $("#tk_repst").value }) });
+        if (attachment && rr && rr.messageId) {
+          try { await api("/owner/support/tickets/" + encodeURIComponent(id) + "/messages/" + encodeURIComponent(rr.messageId) + "/attachment", { method: "POST", body: JSON.stringify({ attachment }) }); }
+          catch (ae) { toast("Resposta enviada, mas o anexo não pôde ser enviado agora."); openTicket(id); loadSupport(); return; }
+        }
         toast("Resposta enviada ao cliente."); openTicket(id); loadSupport();
       } catch (e) { btn.disabled = false; toast(e.message); }
     };

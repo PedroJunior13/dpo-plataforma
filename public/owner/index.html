@@ -310,8 +310,20 @@
         <div class="field" id="e_billing_wrap"><label>Cobrança</label>
           <select id="e_billing"><option value="monthly">Avulsa (bloqueia no vencimento)</option><option value="recurring">Recorrente (renova automático, -5%)</option></select>
         </div>
-        <div class="field hide" id="e_validdays_wrap"><label>Validade da cortesia (dias)</label>
+        <div class="field" id="e_term_wrap"><label>Validade / vencimento</label>
+          <select id="e_term">
+            <option value="monthly">Mensal (30 dias)</option>
+            <option value="annual">Anual (1 ano, com desconto)</option>
+            <option value="custom">Personalizada (escolher dias)</option>
+          </select>
+        </div>
+      </div>
+      <div class="row c2">
+        <div class="field hide" id="e_validdays_wrap"><label>Validade personalizada (dias)</label>
           <input id="e_validdays" type="number" min="1" max="3650" placeholder="365">
+        </div>
+        <div class="field" id="e_dueday_wrap"><label>Dia de vencimento (opcional, 1–28)</label>
+          <input id="e_dueday" type="number" min="1" max="28" placeholder="ex.: 10">
         </div>
       </div>
       <div class="field hide" id="e_reason_wrap"><label>Motivo da cortesia (controle)</label>

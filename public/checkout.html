@@ -44,10 +44,21 @@
 
     <div class="card">
       <h2>Pagamento</h2>
+      <label>Período do plano</label>
+      <div class="seg" id="cycleSeg" style="margin-bottom:14px">
+        <label><input type="radio" name="cycle" value="monthly" checked><span>Mensal</span><div class="small muted">Cobrança a cada mês</div></label>
+        <label><input type="radio" name="cycle" value="annual"><span>Anual −15%</span><div class="small muted">1 ano · maior desconto</div></label>
+      </div>
+
       <label>Tipo de cobrança</label>
       <div class="seg" style="margin-bottom:14px">
-        <label><input type="radio" name="billing" value="monthly" checked><span>Avulsa (mensal)</span><div class="small muted">Bloqueia no vencimento</div></label>
+        <label><input type="radio" name="billing" value="monthly" checked><span>Avulsa</span><div class="small muted">Bloqueia no vencimento</div></label>
         <label><input type="radio" name="billing" value="recurring"><span>Recorrente −5%</span><div class="small muted">Renova automático · só no cartão</div></label>
+      </div>
+
+      <div class="field" id="dueWrap"><label>Dia de vencimento (opcional, 1–28)</label>
+        <input id="dueDay" type="number" min="1" max="28" placeholder="ex.: 10">
+        <div class="small muted">Define o dia do mês em que sua mensalidade vence. Em branco, usamos a data do pagamento.</div>
       </div>
 
       <label>Forma de pagamento</label>
@@ -99,6 +110,7 @@
   let PLANS = [], GATEWAYS = [], selected = null;
 
   function billing() { return document.querySelector('input[name="billing"]:checked').value; }
+  function cycle() { const c = document.querySelector('input[name="cycle"]:checked'); return c ? c.value : "monthly"; }
   function method() { return document.querySelector('input[name="method"]:checked').value; }
   const methodRadio = (v) => document.querySelector('input[name="method"][value="' + v + '"]');
   const billingRadio = (v) => document.querySelector('input[name="billing"][value="' + v + '"]');
@@ -131,11 +143,17 @@
     }
   }
 
-  function priceFor(p) { return billing() === "recurring" ? p.price_recurring_cents : p.price_month_cents; }
+  // Reserva de preço anual quando o backend não enviar: mensal*12*0.85 (15% off).
+  function annualCents(p) { return p.price_annual_cents || Math.round((p.price_month_cents || 0) * 12 * 0.85); }
+  function priceFor(p) {
+    if (cycle() === "annual") return annualCents(p);
+    return billing() === "recurring" ? p.price_recurring_cents : p.price_month_cents;
+  }
+  function totalSuffix() { return cycle() === "annual" ? "/ano" : (billing() === "recurring" ? "/mês" : ""); }
 
   function renderTotal() {
     if (!selected) { $("#total").textContent = "—"; return; }
-    $("#total").textContent = brl(priceFor(selected)) + (billing() === "recurring" ? "/mês" : "");
+    $("#total").textContent = brl(priceFor(selected)) + totalSuffix();
   }
 
   function selectPlan(id) {
@@ -155,7 +173,7 @@
         return `<div class="card plan" data-id="${esc(p.id)}">
           <h3>${esc(p.name)}</h3>
           <div class="price">${brl(p.price_month_cents)}<span class="small muted" style="font-weight:400">/mês</span></div>
-          <div class="small muted">Recorrente: ${brl(p.price_recurring_cents)}/mês</div>
+          <div class="small muted">Recorrente: ${brl(p.price_recurring_cents)}/mês · Anual: ${brl(annualCents(p))}/ano</div>
           <ul><li>${q}</li>${feats.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
         </div>`;
       }).join("");
@@ -171,7 +189,7 @@
 
   function showSuccess(d) {
     $("#okPlan").textContent = d.planName || (selected && selected.name) || "—";
-    $("#okTotal").textContent = brl(d.amountCents) + (billing() === "recurring" ? "/mês" : "");
+    $("#okTotal").textContent = brl(d.amountCents) + totalSuffix();
     $("#okProto").textContent = (d.subscriptionId || "").slice(0, 8).toUpperCase() || "—";
     if (d.message) $("#successMsg").textContent = d.message;
     $("#checkoutMain").classList.add("hide");
@@ -180,6 +198,7 @@
   }
 
   $$('input[name="billing"]').forEach((r) => r.addEventListener("change", () => { syncBillingMethod(); renderTotal(); }));
+  $$('input[name="cycle"]').forEach((r) => r.addEventListener("change", renderTotal));
   $$('input[name="method"]').forEach((r) => r.addEventListener("change", onMethodChange));
 
   $("#btnPay").addEventListener("click", async () => {
@@ -189,8 +208,10 @@
     if (!name || !email) { showErr("Informe nome e e-mail."); return; }
     const b = $("#btnPay"); b.disabled = true; b.textContent = "Processando…";
     try {
+      const dd = parseInt($("#dueDay").value, 10);
       const body = {
-        planId: selected.id, billingType: billing(), method: method(),
+        planId: selected.id, billingType: billing(), billingCycle: cycle(), method: method(),
+        dueDay: (dd >= 1 && dd <= 28) ? dd : null,
         gateway: GATEWAYS.length > 1 ? $("#gateway").value : undefined,
         tenant: { name, email, phone: $("#t_phone").value.trim(), doc: $("#t_doc").value.trim() },
       };

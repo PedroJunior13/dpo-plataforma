@@ -96,9 +96,16 @@ export default async function handler(req) {
 //  PUBLICO / AUTH
 // =====================================================================
 async function listPlans() {
-  const rows = await sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, features
-                         FROM plans WHERE active AND id <> 'owner' ORDER BY tier`;
-  return ok({ plans: rows, gateways: billing.availableGateways() });
+  const rows = await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features
+                         FROM plans WHERE active AND id <> 'owner' ORDER BY tier`,
+    await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, features
+                         FROM plans WHERE active AND id <> 'owner' ORDER BY tier`, []));
+  // Reserva de preco anual quando a coluna ainda nao migrou: mensal*12*0.85 (15% off).
+  const plans = (rows || []).map((p) => ({
+    ...p,
+    price_annual_cents: p.price_annual_cents || Math.round((p.price_month_cents || 0) * 12 * 0.85),
+  }));
+  return ok({ plans, gateways: billing.availableGateways() });
 }
 
 // Semente do dono: garante o usuario OWNER (pedrobj@gmail.com) com a senha PADRAO
@@ -344,10 +351,13 @@ async function mfaDisable(req, user) {
 // =====================================================================
 async function checkout(req) {
   const b = await readJson(req);
-  let { planId, billingType = "monthly", method = "pix", gateway, tenant: t } = b;
+  let { planId, billingType = "monthly", billingCycle = "monthly", method = "pix", gateway, dueDay = null, tenant: t } = b;
   const plan = await one(sql`SELECT * FROM plans WHERE id=${planId} AND active`);
   if (!plan || plan.id === "owner") return fail("Plano invalido.");
   if (!t?.email || !t?.name) return fail("Informe nome e e-mail do assinante.");
+
+  // Ciclo de cobranca: 'monthly' (mensal) ou 'annual' (anual com desconto).
+  const cycle = billingCycle === "annual" ? "annual" : "monthly";
 
   // Regra de negocio: cobranca RECORRENTE e EXCLUSIVA do cartao de credito
   // (renovacao automatica so e possivel no cartao). Garantia no servidor, alem
@@ -356,7 +366,16 @@ async function checkout(req) {
     return fail("A cobranca recorrente e exclusiva do cartao de credito. Para PIX ou boleto, escolha a cobranca avulsa.", 400, { code: "RECURRING_REQUIRES_CARD" });
   }
 
-  const amount = billingType === "recurring" ? plan.price_recurring_cents : plan.price_month_cents;
+  // Dia de vencimento escolhido pelo cliente (1-28). Opcional; fora da faixa = ignora.
+  const dd = parseInt(dueDay, 10);
+  const dueDayVal = (Number.isFinite(dd) && dd >= 1 && dd <= 28) ? dd : null;
+
+  // Valor conforme o ciclo: anual usa price_annual_cents (com reserva mensal*12*0.85);
+  // mensal usa recorrente (-5%) quando recorrente, senao avulso.
+  const annualCents = plan.price_annual_cents || Math.round((plan.price_month_cents || 0) * 12 * 0.85);
+  const amount = cycle === "annual"
+    ? annualCents
+    : (billingType === "recurring" ? plan.price_recurring_cents : plan.price_month_cents);
 
   const tenant = await one(sql`
     INSERT INTO tenants (name, email, phone, doc, plan_id, status)
@@ -367,19 +386,29 @@ async function checkout(req) {
   // a compra fica registrada (pendente) e o dono gera a licenca em 1 clique.
   let charge = null, manual = false;
   try {
-    charge = await billing.createCharge({ gateway, billingType, method, tenant, plan, amountCents: amount });
+    charge = await billing.createCharge({ gateway, billingType, billingCycle: cycle, method, tenant, plan, amountCents: amount });
   } catch (e) {
     manual = true;
     charge = { gateway: "manual", checkoutUrl: null, gatewayRef: null, gatewaySubscriptionId: null };
   }
 
-  const sub = await one(sql`
-    INSERT INTO subscriptions (tenant_id, plan_id, billing_type, gateway, gateway_subscription_id, amount_cents, status)
-    VALUES (${tenant.id}, ${planId}, ${billingType}, ${charge.gateway}, ${charge.gatewaySubscriptionId || null}, ${amount}, 'pending')
-    RETURNING *`);
+  // INSERT da assinatura — RESILIENTE a banco parcialmente migrado: tenta com as
+  // colunas novas (billing_cycle/due_day); se ainda nao existirem, grava o essencial.
+  let sub;
+  try {
+    sub = await one(sql`
+      INSERT INTO subscriptions (tenant_id, plan_id, billing_type, billing_cycle, due_day, gateway, gateway_subscription_id, amount_cents, status)
+      VALUES (${tenant.id}, ${planId}, ${billingType}, ${cycle}, ${dueDayVal}, ${charge.gateway}, ${charge.gatewaySubscriptionId || null}, ${amount}, 'pending')
+      RETURNING *`);
+  } catch (e) {
+    sub = await one(sql`
+      INSERT INTO subscriptions (tenant_id, plan_id, billing_type, gateway, gateway_subscription_id, amount_cents, status)
+      VALUES (${tenant.id}, ${planId}, ${billingType}, ${charge.gateway}, ${charge.gatewaySubscriptionId || null}, ${amount}, 'pending')
+      RETURNING *`);
+  }
   await sql`INSERT INTO payments (tenant_id, subscription_id, gateway, gateway_payment_id, method, amount_cents, status)
             VALUES (${tenant.id}, ${sub.id}, ${charge.gateway}, ${charge.gatewayRef || charge.gatewaySubscriptionId || null}, ${method}, ${amount}, 'pending')`;
-  await audit({ tenantId: tenant.id, actorEmail: t.email, action: "checkout_created", entity: "subscription", entityId: sub.id, detail: { planId, billingType, amount, manual } });
+  await audit({ tenantId: tenant.id, actorEmail: t.email, action: "checkout_created", entity: "subscription", entityId: sub.id, detail: { planId, billingType, billingCycle: cycle, dueDay: dueDayVal, amount, manual } });
 
   // Alimenta o CRM (funil) com a intencao de compra — vira "proposta".
   try { await crmUpsertFromCheckout({ tenant: t, tenantId: tenant.id, planId, amount }); } catch (_) {}
@@ -387,7 +416,7 @@ async function checkout(req) {
   return ok({
     checkoutUrl: charge.checkoutUrl, manual,
     tenantId: tenant.id, subscriptionId: sub.id, amountCents: amount,
-    planName: plan.name,
+    planName: plan.name, billingCycle: cycle, dueDay: dueDayVal,
     message: manual
       ? "Pedido registrado! Nossa equipe vai confirmar o pagamento e liberar seu acesso em instantes."
       : null,
@@ -510,15 +539,23 @@ async function ownerRoutes(req, user, seg, method) {
     const b = await readJson(req);
     if (!b.tenantId && !b.tenant?.name) return fail("Informe um cliente (novo ou existente).");
     const isFree = b.pricing === "free" || b.billingType === "free";
+    // Termo de validade da licenca avulsa: 'monthly' (30d) | 'annual' (1 ano) |
+    // 'custom' (a quantidade de dias que o dono escolher em validDays).
+    const term = ["monthly", "annual", "custom"].includes(b.term) ? b.term : "monthly";
+    const dd = parseInt(b.dueDay, 10);
+    const dueDayVal = (Number.isFinite(dd) && dd >= 1 && dd <= 28) ? dd : null;
     const res = await L.issueLicense({
       tenantId: b.tenantId || null,
       tenant: b.tenant || null,
       planId: b.planId || "basic",
       // Cortesia (sem custo) nao tem cobranca recorrente: forca avulsa por validade.
       billingType: isFree ? "monthly" : (b.billingType || "monthly"),
+      billingCycle: term,
       pricing: isFree ? "free" : "paid",
       reason: b.reason || null,
       validDays: b.validDays || null,
+      validUntil: b.validUntil || null,
+      dueDay: dueDayVal,
       actor: user,
     });
     // AUTO-CRM + auditoria: efeitos colaterais BEST-EFFORT. A licenca ja foi
@@ -675,8 +712,11 @@ async function ownerRoutes(req, user, seg, method) {
   // Cada compra traz toda a informacao da transacao + o modulo escolhido,
   // com botao "Gerar licenca" (1 clique) inerente ao modulo comprado.
   if (r === "purchases" && method === "GET") {
+    // Inclui ciclo (mensal/anual), dia de vencimento escolhido e a data paga-ate.
+    // Fallback gracioso para banco ainda nao migrado (sem billing_cycle/due_day).
     const rows = await safe(sql`
-      SELECT s.id AS subscription_id, s.status AS sub_status, s.billing_type, s.gateway,
+      SELECT s.id AS subscription_id, s.status AS sub_status, s.billing_type, s.billing_cycle,
+             s.due_day, s.current_period_end, s.gateway,
              s.amount_cents, s.created_at, s.plan_id,
              t.id AS tenant_id, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
              t.doc AS tenant_doc, t.status AS tenant_status, p.name AS plan_name, p.tier AS plan_tier,
@@ -685,7 +725,19 @@ async function ownerRoutes(req, user, seg, method) {
              (SELECT pay.status FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS pay_status,
              EXISTS(SELECT 1 FROM licenses l WHERE l.tenant_id=t.id) AS has_license
       FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
-      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`, []);
+      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`,
+      await safe(sql`
+      SELECT s.id AS subscription_id, s.status AS sub_status, s.billing_type, NULL AS billing_cycle,
+             NULL AS due_day, s.current_period_end, s.gateway,
+             s.amount_cents, s.created_at, s.plan_id,
+             t.id AS tenant_id, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
+             t.doc AS tenant_doc, t.status AS tenant_status, p.name AS plan_name, p.tier AS plan_tier,
+             p.client_quota,
+             (SELECT pay.method FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS method,
+             (SELECT pay.status FROM payments pay WHERE pay.subscription_id=s.id ORDER BY pay.created_at DESC LIMIT 1) AS pay_status,
+             EXISTS(SELECT 1 FROM licenses l WHERE l.tenant_id=t.id) AS has_license
+      FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
+      WHERE t.is_owner=FALSE ORDER BY s.created_at DESC LIMIT 200`, []));
     return ok({ purchases: rows });
   }
   // Gera a licenca inerente ao modulo comprado, a partir da assinatura.
@@ -694,12 +746,19 @@ async function ownerRoutes(req, user, seg, method) {
     if (!sub) return fail("Compra nao encontrada.", 404);
     const exists = await one(sql`SELECT id FROM licenses WHERE tenant_id=${sub.tenant_id} ORDER BY created_at DESC LIMIT 1`);
     if (exists) return fail("Este cliente ja possui licenca. Gerencie em Licencas.", 409, { code: "ALREADY_LICENSED" });
+    const cycle = sub.billing_cycle === "annual" ? "annual" : "monthly";
     const res = await L.issueLicense({
       tenantId: sub.tenant_id, planId: sub.plan_id, billingType: sub.billing_type || "monthly",
+      billingCycle: cycle, dueDay: sub.due_day || null,
       subscriptionId: sub.id, actor: user,
     });
-    // Marca a assinatura como ativa (pagamento confirmado manualmente) e CRM => cliente.
-    await sql`UPDATE subscriptions SET status='active' WHERE id=${sub.id}`;
+    // Marca a assinatura como ativa (pagamento confirmado manualmente) e define a
+    // janela paga-ate conforme o ciclo (mensal=+30d / anual=+1ano), respeitando o
+    // dia de vencimento escolhido — assim o cron e o kill-switch governam a licenca.
+    let periodEnd = new Date(Date.now() + (cycle === "annual" ? 365 : 30) * 864e5);
+    const dDay = parseInt(sub.due_day, 10);
+    if (Number.isFinite(dDay) && dDay >= 1 && dDay <= 28) periodEnd.setDate(dDay);
+    await sql`UPDATE subscriptions SET status='active', current_period_start=now(), current_period_end=${periodEnd.toISOString()}, updated_at=now() WHERE id=${sub.id}`;
     await crmEnsureClientFromTenant(sub.tenant_id, sub.plan_id, "compra");
     const t = await one(sql`SELECT name, email, phone FROM tenants WHERE id=${sub.tenant_id}`);
 
@@ -1052,7 +1111,9 @@ function ticketCategoryLabel(id) {
 function sanitizeAttachment(att) {
   if (!att || !att.data || !att.name) return null;
   const data = String(att.data);
-  if (data.length > 2_700_000) throw httpError("Anexo muito grande (limite 2 MB).", 413);
+  // 2 MB binario => ~2,796,203 chars base64. Damos folga ate 2,9M para que um arquivo
+  // de exatamente 2 MB (aceito no cliente) nunca seja recusado por arredondamento.
+  if (data.length > 2_900_000) throw httpError("Anexo muito grande (limite 2 MB).", 413);
   return { name: String(att.name).slice(0, 180), type: String(att.type || "application/octet-stream").slice(0, 120), data };
 }
 // Remove o base64 pesado da mensagem e expoe so a flag de existencia do anexo.
@@ -1147,6 +1208,21 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     return ok({ name: m.attachment_name, type: m.attachment_type, data: m.attachment_data });
   }
 
+  // ---- ANEXAR arquivo a uma MENSAGEM em requisicao DEDICADA (apos responder) ----
+  // O blob pesado nunca viaja junto da resposta — etapa isolada, sem risco de HTTP 502.
+  if (head === "tickets" && sseg[1] && sseg[2] === "messages" && sseg[3] && sseg[4] === "attachment" && method === "POST") {
+    const mid = parseInt(sseg[3], 10);
+    if (!Number.isFinite(mid)) return fail("Mensagem invalida.", 400);
+    const b = await readJson(req);
+    const att = sanitizeAttachment(b.attachment);
+    if (!att) return fail("Anexo invalido.");
+    const m = await one(sql`SELECT id FROM support_ticket_messages WHERE id=${mid} AND ticket_id=${sseg[1]}`);
+    if (!m) return fail("Mensagem nao encontrada.", 404);
+    await sql`UPDATE support_ticket_messages SET attachment_name=${att.name}, attachment_type=${att.type},
+      attachment_data=${att.data} WHERE id=${m.id}`;
+    return ok({ ok: true, attachment_name: att.name });
+  }
+
   // ---- RESPONDER ao cliente (registra mensagem + anexo opcional + e-mail) ----
   if (head === "tickets" && sseg[1] && sseg[2] === "reply" && method === "POST") {
     const b = await readJson(req);
@@ -1182,7 +1258,7 @@ async function ownerSupportRoutes(req, user, sseg, method) {
           <p>Acesse a plataforma, menu <b>Suporte</b>, para acompanhar e responder.</p>
           <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }), 2500, null);
     }
-    return ok({ ok: true, status: newStatus });
+    return ok({ ok: true, status: newStatus, messageId: msg.id });
   }
 
   // ---- ALTERAR STATUS / PRIORIDADE ----
@@ -1310,6 +1386,35 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     return ok({ name: t.attachment_name, type: t.attachment_type, data: t.attachment_data });
   }
 
+  // ANEXAR arquivo ao CHAMADO em requisicao DEDICADA (apos abrir o chamado). O blob
+  // pesado NUNCA viaja junto da criacao do chamado — esta etapa isolada tem todo o
+  // orcamento de tempo so para a gravacao do anexo, eliminando de vez o HTTP 502.
+  if (head && sseg[1] === "attachment" && method === "POST") {
+    const b = await readJson(req);
+    const att = sanitizeAttachment(b.attachment);
+    if (!att) return fail("Anexo invalido.");
+    const t = await one(sql`SELECT id FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
+    if (!t) return fail("Chamado nao encontrado.", 404);
+    await sql`UPDATE support_tickets SET attachment_name=${att.name}, attachment_type=${att.type},
+      attachment_data=${att.data} WHERE id=${t.id}`;
+    return ok({ ok: true, attachment_name: att.name });
+  }
+
+  // ANEXAR arquivo a uma MENSAGEM da conversa em requisicao DEDICADA (apos responder).
+  if (head && sseg[1] === "messages" && sseg[2] && sseg[3] === "attachment" && method === "POST") {
+    const mid = parseInt(sseg[2], 10);
+    if (!Number.isFinite(mid)) return fail("Mensagem invalida.", 400);
+    const b = await readJson(req);
+    const att = sanitizeAttachment(b.attachment);
+    if (!att) return fail("Anexo invalido.");
+    const m = await one(sql`SELECT m.id FROM support_ticket_messages m JOIN support_tickets t ON t.id=m.ticket_id
+      WHERE m.id=${mid} AND m.ticket_id=${head} AND t.tenant_id=${tenant.id}`);
+    if (!m) return fail("Mensagem nao encontrada.", 404);
+    await sql`UPDATE support_ticket_messages SET attachment_name=${att.name}, attachment_type=${att.type},
+      attachment_data=${att.data} WHERE id=${m.id}`;
+    return ok({ ok: true, attachment_name: att.name });
+  }
+
   // Download do anexo de uma MENSAGEM da conversa (base64) — so do proprio tenant.
   if (head && sseg[1] === "messages" && sseg[2] && sseg[3] === "attachment" && method === "GET") {
     const mid = parseInt(sseg[2], 10);
@@ -1360,7 +1465,7 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }), 2500, null);
     }
-    return ok({ ok: true });
+    return ok({ ok: true, messageId: msg.id });
   }
 
   return fail("Rota de suporte do app nao encontrada: " + sseg.join("/"), 404);
