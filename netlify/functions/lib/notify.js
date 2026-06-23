@@ -7,7 +7,7 @@ import { sql } from "./db.js";
 // ate o limite do Netlify e o cliente receberia HTTP 502. Com AbortController,
 // no pior caso desistimos em FETCH_TIMEOUT_MS e a operacao principal (ex.: abrir
 // chamado) NUNCA fica refem do envio do e-mail.
-const FETCH_TIMEOUT_MS = Number(process.env.NOTIFY_TIMEOUT_MS || 8000);
+const FETCH_TIMEOUT_MS = Number(process.env.NOTIFY_TIMEOUT_MS || 6000);
 async function fetchWithTimeout(url, opts) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);

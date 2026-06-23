@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  const PLATFORM_VERSION = "2.8.3";
+  const PLATFORM_VERSION = "2.8.4";
   const API = "/api";
   const TOKEN = localStorage.getItem("dpo_token");
   const USER = JSON.parse(localStorage.getItem("dpo_user") || "null");
@@ -288,11 +288,15 @@
     PLANS = (d.plans || []).filter((p) => p.id !== "owner");
     return PLANS;
   }
+  // Preço de referência por módulo — garante valores corretos no seletor mesmo que
+  // o banco ainda não tenha aplicado a migração de preços (evita "R$ 0,00/mês").
+  const FALLBACK_PRICE = { basic: 35000, inter: 50000, adv: 80000 };
   async function openEmitir() {
     await ensurePlans();
     $("#e_plan").innerHTML = PLANS.map((p) => {
       const q = p.client_quota == null ? "ilimitado" : p.client_quota + " clientes";
-      return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(p.price_month_cents)}/mês</option>`;
+      const cents = p.price_month_cents || FALLBACK_PRICE[p.id] || 0;
+      return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(cents)}/mês</option>`;
     }).join("");
     ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
     if ($("#e_validdays")) $("#e_validdays").value = "";
@@ -315,17 +319,22 @@
   $("#btnEmitirTop").addEventListener("click", openEmitir);
   $("#btnEmitOutra").addEventListener("click", openEmitir);
 
-  // Auto-preenchimento por CNPJ (BrasilAPI via backend)
+  // Auto-preenchimento por CNPJ/CPF (bases públicas via backend, com timeout/reserva).
+  // Aceita CNPJ (14 dígitos) e CPF (11). CPF não tem base pública: apenas valida e
+  // pede preenchimento manual (sem erro). CNPJ preenche nome/e-mail/telefone.
   $("#e_cnpj").addEventListener("click", async () => {
-    const doc = digits($("#e_doc").value); if (doc.length !== 14) { toast("Informe um CNPJ com 14 dígitos."); return; }
+    const doc = digits($("#e_doc").value);
+    if (doc.length !== 14 && doc.length !== 11) { toast("Informe um CNPJ (14 dígitos) ou CPF (11 dígitos)."); return; }
     const b = $("#e_cnpj"); b.disabled = true; b.textContent = "…";
     try {
       const r = await api(`/owner/crm/cnpj/${doc}`);
+      if (r.manual) { toast(r.message || "CPF aceito — preencha os dados manualmente."); return; }
       const c = r.company || {};
-      if (c.name && !$("#e_name").value) $("#e_name").value = c.name;
-      if (c.email && !$("#e_email").value) $("#e_email").value = c.email;
-      if (c.phone && !$("#e_phone").value) $("#e_phone").value = c.phone;
-      toast("Dados do CNPJ preenchidos.");
+      let filled = 0;
+      if (c.name && !$("#e_name").value) { $("#e_name").value = c.name; filled++; }
+      if (c.email && !$("#e_email").value) { $("#e_email").value = c.email; filled++; }
+      if (c.phone && !$("#e_phone").value) { $("#e_phone").value = c.phone; filled++; }
+      toast(filled ? "Dados do CNPJ preenchidos." : "Consulta concluída — confira/complete os dados.");
     } catch (e) { toast(e.message); } finally { b.disabled = false; b.textContent = "Buscar"; }
   });
 
@@ -521,6 +530,14 @@
         ${l.status === "suspended" ? `<button class="btn sm green" id="mb_reactivate">Reativar licença</button>` : ""}
         ${l.status !== "revoked" ? `<button class="btn sm danger" id="mb_revoke">Revogar licença</button>` : ""}
       </div>
+
+      <h3 style="margin-top:16px;color:#ff9aa8">Exclusão definitiva (limpeza de infraestrutura)</h3>
+      <p class="small muted">Para remover licenças avulsas/de teste sem acumular ambientes. <b>Ação irreversível.</b>
+        Suspender/Revogar apenas bloqueia o acesso — para apagar de vez, use abaixo.</p>
+      <div class="actrow">
+        <button class="btn sm danger" id="mb_dellic">Excluir só a licença</button>
+        <button class="btn sm danger" id="mb_deltenant">Excluir cliente e ambiente (tudo)</button>
+      </div>
       <div id="mb_out" class="small" style="margin-top:8px"></div>`;
     openModal("modalManage");
 
@@ -592,6 +609,20 @@
     if ($("#mb_suspend")) $("#mb_suspend").onclick = () => licAct("suspend", "Suspender o acesso (kill-switch)?");
     if ($("#mb_reactivate")) $("#mb_reactivate").onclick = () => licAct("reactivate");
     if ($("#mb_revoke")) $("#mb_revoke").onclick = () => licAct("revoke", "Revogar definitivamente esta licença?");
+    // Exclusão definitiva (limpeza). Confirmações fortes — ação irreversível.
+    if ($("#mb_dellic")) $("#mb_dellic").onclick = async () => {
+      if (!confirm("Excluir DEFINITIVAMENTE apenas esta licença?\n\nO cliente/ambiente é mantido. Esta ação não pode ser desfeita.")) return;
+      try { await api(`/owner/licenses/${lid}/delete`, { method: "POST" }); toast("Licença excluída."); refresh(); }
+      catch (e) { out(`<span style="color:#ff9aa8">${esc(e.message)}</span>`); }
+    };
+    if ($("#mb_deltenant")) $("#mb_deltenant").onclick = async () => {
+      const nm = l.tenant_name || "este cliente";
+      if (!confirm(`EXCLUIR DEFINITIVAMENTE "${nm}" e TODO o ambiente?\n\nRemove licenças, clientes, documentos, chamados, assinaturas e usuários. Esta ação é IRREVERSÍVEL.`)) return;
+      const typed = prompt('Para confirmar a exclusão total, digite EXCLUIR:');
+      if ((typed || "").trim().toUpperCase() !== "EXCLUIR") { toast("Exclusão cancelada."); return; }
+      try { await api(`/owner/tenants/${tid}/delete`, { method: "POST" }); toast("Cliente e ambiente excluídos."); refresh(); }
+      catch (e) { out(`<span style="color:#ff9aa8">${esc(e.message)}</span>`); }
+    };
   }
 
   // ===================================================================

@@ -52,7 +52,7 @@
 <main class="wrap section-pad">
 <div class="doc">
   <h1 id="topo">Tutorial operacional do dono — vendas e gestão</h1>
-  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.3</b>).
+  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.4</b>).
      Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
      <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
      <b>Integrações (NFS-e)</b>, cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
@@ -83,7 +83,7 @@
 
   <!-- 1 -->
   <h2 id="painel">1. Visão geral do painel</h2>
-  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.3</span> ao lado do menu.</p>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.4</span> ao lado do menu.</p>
   <ul>
     <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
     <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
@@ -128,12 +128,13 @@
   <!-- 4 -->
   <h2 id="emitir">4. Emitir licença manualmente (venda assistida)</h2>
   <div class="step"><div class="n">1</div><div>Clique em <span class="btnref">+ Emitir licença</span> (topo do <span class="tab">Painel</span> ou na aba <span class="tab">Licenças</span>).</div></div>
-  <div class="step"><div class="n">2</div><div>Preencha <b>Nome do cliente</b> (obrigatório), CNPJ/CPF, E-mail e WhatsApp. Dica: digite o CNPJ e clique em <span class="btnref">Buscar</span> para preencher nome/e-mail/telefone automaticamente.</div></div>
-  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e o <b>Tipo de licença</b>:
+  <div class="step"><div class="n">2</div><div>Preencha <b>Nome do cliente</b> (obrigatório), CNPJ/CPF, E-mail e WhatsApp. O campo de documento aceita <b>CNPJ (14 dígitos) ou CPF (11 dígitos)</b> — digite e clique em <span class="btnref">Buscar</span>: com <b>CNPJ</b>, a plataforma consulta a base pública e preenche <b>nome/e-mail/telefone</b> automaticamente; com <b>CPF</b>, ela aceita o número e avisa para preencher os dados à mão (não existe base pública de CPF). A busca tem tempo-limite e <b>nunca trava a tela</b> — se a base estiver fora do ar, você simplesmente completa manualmente.</div></div>
+  <div class="step"><div class="n">3</div><div>Escolha o <b>Módulo</b> e o <b>Tipo de licença</b>. O seletor de módulo já mostra o <b>preço mensal real de cada plano</b> <span class="new">NOVO</span> (Básico, Intermediário e Avançado) ao lado do nome — não aparece mais “R$ 0,00/mês”.
     <ul style="margin:6px 0 0 16px">
-      <li><b>Paga (com cobrança)</b> — define a <b>Cobrança</b>: Avulsa (bloqueia no vencimento) ou Recorrente (renova automático, −5%).</li>
+      <li><b>Paga (com cobrança)</b> — define a <b>Cobrança</b>: Avulsa (bloqueia no vencimento) ou Recorrente (renova automático, −5%). Escolha esta opção quando houver <b>faturamento</b>.</li>
       <li><b>Cortesia — avulsa SEM custo</b> <span class="new">NOVO</span> — gera a licença <b>gratuita</b> (parceria, teste estendido, brinde, cliente vitalício). Informe a <b>Validade em dias</b> (padrão 365) e o <b>Motivo da cortesia</b> (obrigatório, para controle).</li>
     </ul>
+    <div class="note" style="margin-top:8px">A diferença entre os dois tipos fica <b>explícita na tela</b>: <b>Paga</b> abre os campos de cobrança; <b>Cortesia</b> abre validade + motivo. Assim você nunca emite uma cobrança sem querer (nem deixa de cobrar quando deveria).</div>
   </div>
   <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Nº da licença</b> (ex.: <code>DPO-L-2026-1001</code>), um <b>selo Paga/Cortesia</b>, o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
   <div class="note ok"><b>Controle total de cada licença</b> <span class="new">NOVO</span> — toda licença gerada (paga ou cortesia) recebe <b>número sequencial</b> + <b>versão</b> e fica registrada na <span class="tab">Auditoria</span>. Na lista de <span class="tab">Licenças</span> cada linha mostra o selo <b>Paga</b> ou <b>Cortesia</b> (com o motivo no “Gerenciar”), permitindo distinguir vendas de brindes a qualquer momento.</div>
@@ -184,6 +185,15 @@
   </ul>
   <div class="note danger">Bloqueios por <b>inadimplência</b> acontecem sozinhos (item 10). Use as ações manuais só para casos pontuais. <b>Revogar é irreversível.</b></div>
 
+  <h3>6.4 Exclusão definitiva (limpeza de infraestrutura) <span class="new">NOVO</span></h3>
+  <p>No fim do drawer <span class="btnref">Gerenciar</span> há o bloco <b>“Exclusão definitiva (limpeza de infraestrutura)”</b>, com duas ações para <b>remover dados de teste</b> e não acumular lixo no banco — útil depois de gerar uma <b>licença avulsa só para testar</b> o fluxo de ponta a ponta.</p>
+  <ul>
+    <li><span class="btnref">Excluir licença</span> — apaga <b>apenas a licença</b> selecionada (mantém o cliente/ambiente). Pede confirmação. Ideal para remover uma chave gerada por engano ou só para teste.</li>
+    <li><span class="btnref">Excluir cliente e ambiente</span> — apaga <b>o cliente e tudo ligado a ele</b> (licenças, assinatura, dados do ambiente) em cascata. Como é irreversível, além de confirmar você precisa <b>digitar EXCLUIR</b> para liberar a ação.</li>
+  </ul>
+  <div class="note ok"><b>Teste de ponta a ponta sem poluir a base</b> <span class="new">NOVO</span> — agora você consegue <b>gerar uma licença avulsa de teste</b>, validar todo o caminho (emissão → link → ativação) e depois <b>excluí-la</b> (a licença, ou o cliente inteiro) sem deixar resíduo. Não há mais “impedimento de dados” para experimentar à vontade.</div>
+  <div class="note danger"><b>Irreversível.</b> A exclusão remove os registros do banco em definitivo e fica gravada na <span class="tab">Auditoria</span> (o registro de auditoria é mantido mesmo após a remoção em cascata). Nunca use em um cliente de produção ativo — para esses casos use <b>Inativar</b>, <b>Suspender</b> ou <b>Revogar</b>.</div>
+
   <!-- 7 -->
   <h2 id="crm">7. CRM: funil, contatos, atividades e campanhas <span class="new">NOVO</span></h2>
   <p>Na aba <span class="tab">CRM</span> você acompanha quatro indicadores no topo — <b>Contatos</b>, <b>Clientes (ganhos)</b>, <b>Conversão</b> e <b>Follow-ups (3 dias)</b> — e gerencia o funil em quadro Kanban com 6 estágios: <b>Lead · Contato · Proposta · Ganho · Perdido · Cliente</b>.</p>
@@ -229,6 +239,7 @@
   <div class="step"><div class="n ok">3</div><div>Use o seletor de <b>status</b> para mover o chamado: <b>Aberto → Em andamento → Aguardando cliente → Resolvido → Fechado</b>. Também dá para ajustar a <b>prioridade</b>. Cada mudança fica registrada.</div></div>
   <div class="note warn"><b>Prazos de 1ª resposta (SLA):</b> Urgente <b>4h</b> · Alta <b>8h</b> · Normal <b>24h</b> · Baixa <b>48h</b>. Quando o prazo vira, o chamado entra em <b>SLA estourado</b> (vermelho) no KPI e na linha — priorize esses.</div>
   <div class="note ok">Tudo do Service Desk (abertura, resposta, mudança de status) entra na <span class="tab">Auditoria</span>. Funciona para <b>licenças de clientes e de consultores</b>.</div>
+  <div class="note ok"><b>Anexo de chamado mais confiável</b> <span class="new">NOVO</span> — abrir ou responder um chamado <b>com arquivo anexado</b> não dá mais erro de comunicação (o antigo <b>HTTP 502</b>). O chamado é gravado <b>primeiro</b> e o e-mail de aviso sai em segundo plano com <b>tempo-limite</b> — ou seja, mesmo que o servidor de e-mail demore, o anexo é salvo e a tela confirma o envio normalmente. Vale para <b>todas as licenças, atuais e futuras</b>.</div>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 9 -->
@@ -296,7 +307,7 @@
     <li><b>Trava por inatividade <span class="new">NOVO</span>:</b> após <b>20 minutos parado</b> (sem mouse, teclado, toque ou rolagem), a tela é <b>bloqueada</b> e a sessão encerrada, exigindo <b>novo login</b> — vale para o <b>seu Painel</b> e para o <b>ambiente dos assinantes</b>, em <b>desktop e celular</b>. A demonstração pública não expira por inatividade.</li>
     <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
     <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
-    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.3</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.4</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
   </ul>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
@@ -324,6 +335,7 @@
     <li>Cliente ativa: <b>cria conta → configura 2FA → confirma licença</b> (cai no perfil certo).</li>
     <li>Precisa ajudar? <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Acessar ambiente (suporte)</span> / <span class="btnref">Regenerar acesso</span> / <span class="btnref">Resetar 2FA</span>.</li>
     <li>Cliente cresceu? <span class="btnref">Aplicar módulo</span> ou <span class="btnref">Salvar cota</span> — sem perder dados.</li>
+    <li>Testou uma licença avulsa? <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <b>Exclusão definitiva</b> → <span class="btnref">Excluir licença</span> (ou <span class="btnref">Excluir cliente e ambiente</span>, digitando <code>EXCLUIR</code>) para não acumular dados de teste.</li>
     <li>Relacionamento: <span class="tab">CRM</span> para funil, follow-ups e <span class="btnref">Campanhas</span> de retenção.</li>
     <li>Chamado novo? <span class="tab">Suporte</span> (selo vermelho avisa) → <span class="btnref">Abrir / responder</span> → responda <b>na própria interface</b> (com anexo, se precisar) → mudar status. A fila já mostra a <b>consultoria</b> e o <b>🏢 cliente</b> de origem. Priorize os de <b>SLA estourado</b>.</li>
     <li>Nota fiscal: configure uma vez em <span class="tab">Integrações</span> → <span class="btnref">Salvar</span> → <span class="btnref">Testar configuração</span>; depois a NFS-e sai sozinha.</li>
@@ -332,7 +344,7 @@
   </ol>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.3.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.4.</p>
 </div>
 </main>
 </body>

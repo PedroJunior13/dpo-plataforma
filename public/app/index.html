@@ -898,7 +898,29 @@ tbody tr:hover{background:var(--surface-2);}
 .inc-tl-item{display:flex;gap:10px;padding:6px 0;}
 .inc-tl-dot{width:9px;height:9px;border-radius:50%;background:var(--gold);margin-top:5px;flex:none;box-shadow:0 0 0 3px rgba(232,181,58,.18);}
 .inc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);}
+/* Anti-flash: quando a entrada é automática (dono/assinante/suporte/demonstração),
+   o ambiente já abre autenticado. Escondemos a tela de login DESDE o parse do HTML
+   para que o e-mail de demonstração nunca pisque antes da interface abrir. */
+html.suppress-login #login-view{display:none!important;}
 </style>
+<script>
+/* Executado no <head>, ANTES de o <body> renderizar. Marca <html> para suprimir a
+   tela de login quando há sessão real (dono/assinante), modo suporte ou demonstração
+   — eliminando o "flash" de login com o e-mail antigo. Rotas públicas (#/portal, …)
+   nunca são suprimidas. A marca é removida ao fim do boot (após handleHash). */
+(function(){
+  try{
+    var p=new URLSearchParams(location.search);
+    var hasSupport=!!(p.get("support")||"").trim();
+    var isDemo=(p.get("demo")||"")==="1";
+    var isPublic=/^#\/(portal|acompanhamento|politica|selo|treinamento|mapeamento|certificado)\//.test(location.hash||"");
+    var hasSaas=false; try{ hasSaas=!!(localStorage.getItem("dpo_token") && localStorage.getItem("dpo_user")); }catch(_){ }
+    if(!isPublic && (hasSupport||isDemo||hasSaas)){
+      document.documentElement.className += (document.documentElement.className?" ":"")+"suppress-login";
+    }
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
 
@@ -987,7 +1009,7 @@ tbody tr:hover{background:var(--surface-2);}
 /* ===== DPO PJ Protection — aplicação single-file (client-side / Netlify) ===== */
 /* ===== Core ===== */
 const APP_NAME = "DPO PJ Protection";
-const APP_VERSION = "v3.63.3";
+const APP_VERSION = "v3.63.4";
 /* ===== i18n — Português (padrão) / English ===== */
 const LANG_KEY="dpo_pj_lang";
 /* Padrão da região Brasil: Português (PT). A escolha do idioma vale para a sessão atual (escolhida já no login);
@@ -2790,6 +2812,11 @@ function mappingWorkflow(cid){
    Lógica: a cada atualização, adicione uma nova entrada no TOPO com:
    { v, date, tag, tagColor:'good|info|warn|danger', items:[ {type:'add|fix|upd|perf|remove|sec', txt} ] } */
 const CHANGELOG = [
+  { v:"v3.63.4", date:"22/06/2026", tag:"Acesso à consultoria sem o “piscar” da tela de login: ao entrar no seu ambiente de consultoria (pelo painel, por suporte ou pelo link de demonstração) a tela de login não aparece mais por um instante — você cai direto na interface certa. Anexo de chamado de suporte mais confiável (sem HTTP 502)", tagColor:"good", items:[
+    {type:"fix", txt:"⚡ <strong>Fim do “flash” da tela de login</strong>: ao abrir a consultoria já autenticado (a partir do painel do dono, em modo suporte ou pelo link de demonstração), a tela de login chegava a <strong>piscar com um e-mail antigo</strong> antes de a interface correta abrir. Agora um <strong>guard no carregamento</strong> esconde a tela de login quando a entrada é automática — você vê <strong>direto</strong> o ambiente certo, sem o cadastro antigo aparecer"},
+    {type:"fix", txt:"📎 <strong>Anexo de chamado à prova de falha</strong>: abrir ou responder um chamado de suporte <strong>com arquivo anexado</strong> não dá mais <strong>“Falha na comunicação com o suporte (HTTP 502)”</strong>. O chamado é <strong>gravado primeiro</strong> e o e-mail de aviso sai em segundo plano com <strong>tempo-limite rígido</strong> — mesmo que o servidor de e-mail demore, o anexo é salvo e a tela confirma o envio. Vale para <strong>todas as licenças, atuais e futuras</strong>"},
+    {type:"upd", txt:"🪪 <strong>Emissão de licença mais robusta</strong> (painel do dono): o campo de documento aceita <strong>CNPJ (14 díg.) ou CPF (11 díg.)</strong>, a busca por CNPJ preenche os dados sozinha (com tempo-limite, sem travar) e o seletor de módulo mostra o <strong>preço real de cada plano</strong>. A escolha entre <strong>licença Paga</strong> (com cobrança) e <strong>Cortesia</strong> (avulsa sem custo) ficou explícita, e há nova <strong>exclusão definitiva</strong> para remover uma licença ou um cliente de teste sem acumular dados"},
+  ]},
   { v:"v3.63.3", date:"22/06/2026", tag:"Suporte por cliente atendido: ao abrir um chamado você diz se é sobre a própria consultoria ou sobre um cliente específico (empresa). Cada cliente ganhou o item “🛟 Suporte do cliente” no menu, com os chamados daquele cliente agrupados. O chamado chega ao suporte já identificado (consultoria + empresa-cliente com CNPJ). Botão “Estágio anterior” renomeado para “Voltar”", tagColor:"good", items:[
     {type:"add", txt:"🏢 <strong>Origem do chamado identificada</strong>: no formulário de suporte há o campo <strong>“Este chamado é sobre”</strong> — escolha entre <strong>a própria consultoria (assunto geral/plataforma)</strong> ou <strong>um cliente atendido</strong> (empresa). Quando é sobre um cliente, o chamado chega ao suporte <strong>já identificado</strong>: aparece a <strong>consultoria de origem</strong> e a <strong>empresa-cliente (nome + CNPJ)</strong> a que o problema se refere"},
     {type:"add", txt:"🛟 <strong>Suporte dentro de cada cliente</strong>: ao abrir um cliente, o menu lateral ganha o item <strong>“Suporte do cliente”</strong>. Por ali todo chamado já sai <strong>amarrado àquele cliente</strong> (sem escolher na lista) e você vê só os <strong>chamados daquele cliente</strong> — a conversa fica agrupada por empresa"},
@@ -9066,6 +9093,10 @@ function showDemoExpired(){
   }catch(e){}
 })();
 handleHash();
+/* Fim do boot: a entrada automática já ocorreu (enterApp escondeu #login-view) ou
+   caímos no fallback de login. Removemos a marca anti-flash para que, se a tela de
+   login PRECISAR aparecer (ex.: sem sessão), ela não fique presa escondida. */
+try{ document.documentElement.classList.remove("suppress-login"); }catch(_){ }
 </script>
 </body>
 </html>

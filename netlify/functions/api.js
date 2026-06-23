@@ -521,9 +521,11 @@ async function ownerRoutes(req, user, seg, method) {
       validDays: b.validDays || null,
       actor: user,
     });
-    // AUTO-CRM: toda licenca emitida manualmente tambem cadastra o cliente no CRM.
-    await crmEnsureClientFromTenant(res.license.tenant_id, b.planId || "basic", "emissao_manual");
-    await audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId: b.planId, license_no: res.license.license_no, pricing: res.license.pricing, reason: b.reason || null } });
+    // AUTO-CRM + auditoria: efeitos colaterais BEST-EFFORT. A licenca ja foi
+    // emitida e o link/mensagem DEVEM ser devolvidos mesmo que o CRM ou o log
+    // falhem — nada pode impedir a geracao da licenca ("sem impedimento de dados").
+    await safe(crmEnsureClientFromTenant(res.license.tenant_id, b.planId || "basic", "emissao_manual"), null);
+    await safe(audit({ tenantId: res.license.tenant_id, actorEmail: user.email, action: "license_issued", entity: "license", entityId: res.license.id, detail: { planId: b.planId, license_no: res.license.license_no, pricing: res.license.pricing, reason: b.reason || null } }), null);
     return ok({
       license: res.license, plan: res.plan,
       link: res.link, message: res.message,
@@ -551,6 +553,17 @@ async function ownerRoutes(req, user, seg, method) {
     return ok({ license: await L.reactivateLicense(seg[2], user) });
   if (seg[1] === "licenses" && seg[2] && seg[3] === "revoke" && method === "POST")
     return ok({ license: await L.revokeLicense(seg[2], user) });
+  // EXCLUIR SOMENTE a licenca (mantem o cliente/ambiente). Permissao do dono, sem
+  // impedimento de dados — util para limpar licencas de teste/avulsas. A do dono
+  // e protegida. Os eventos de licenca ficam (license_id -> NULL) para historico.
+  if (seg[1] === "licenses" && seg[2] && seg[3] === "delete" && method === "POST") {
+    const lic = await one(sql`SELECT l.*, t.is_owner FROM licenses l JOIN tenants t ON t.id=l.tenant_id WHERE l.id=${seg[2]}`);
+    if (!lic) return fail("Licenca nao encontrada.", 404);
+    if (lic.is_owner) return fail("A licenca do ambiente do dono nao pode ser excluida.", 400);
+    await safe(audit({ tenantId: lic.tenant_id, actorEmail: user.email, action: "license_deleted", entity: "license", entityId: lic.id, detail: { license_no: lic.license_no || null, license_key: lic.license_key }, ip: clientIp(req) }), null);
+    await sql`DELETE FROM licenses WHERE id=${lic.id}`;
+    return ok({ deleted: true });
+  }
 
   // Ativar / Inativar cliente (inadimplencia ou desativacao manual).
   if (seg[1] === "tenants" && seg[2] && seg[3] === "active" && method === "POST") {
@@ -588,6 +601,23 @@ async function ownerRoutes(req, user, seg, method) {
     const t = await one(sql`SELECT phone FROM tenants WHERE id=${seg[2]}`);
     const msg = `Sua senha de acesso a plataforma DPO PJ Protection foi redefinida.\n\nE-mail: ${res.email}\nSenha temporaria: ${res.tempPassword}\n\nAcesse e troque a senha assim que entrar. Seu 2FA continua valendo.`;
     return ok({ email: res.email, tempPassword: res.tempPassword, message: msg, whatsapp: t?.phone ? waLink(t.phone, msg) : null });
+  }
+  // EXCLUIR o CLIENTE e TODO o ambiente (definitivo). Permissao do dono, sem
+  // impedimento de dados — limpa licencas avulsas/de teste sem acumular
+  // infraestrutura. O ambiente do dono e protegido. A exclusao do tenant remove
+  // em CASCATA clientes, documentos, chamados, assinaturas, usuarios e afins.
+  if (seg[1] === "tenants" && seg[2] && seg[3] === "delete" && method === "POST") {
+    const t = await one(sql`SELECT * FROM tenants WHERE id=${seg[2]}`);
+    if (!t) return fail("Cliente nao encontrado.", 404);
+    if (t.is_owner) return fail("O ambiente do dono nao pode ser excluido.", 400);
+    // Auditoria GLOBAL (tenantId=null) ANTES de excluir — para o registro sobreviver
+    // a exclusao do tenant (audit_log.tenant_id e ON DELETE CASCADE).
+    await safe(audit({ tenantId: null, actorEmail: user.email, action: "tenant_deleted", entity: "tenant", entityId: t.id, detail: { name: t.name, doc: t.doc || null, plan_id: t.plan_id }, ip: clientIp(req) }), null);
+    // Remove licencas primeiro (libera a FK licenses->subscriptions); o DELETE do
+    // tenant cascateia o restante. Best-effort no passo 1 para nunca travar a limpeza.
+    await safe(sql`DELETE FROM licenses WHERE tenant_id=${t.id}`, null);
+    await sql`DELETE FROM tenants WHERE id=${t.id}`;
+    return ok({ deleted: true });
   }
 
   // ---- PAGAMENTOS / NOTAS ----
@@ -782,6 +812,18 @@ async function safe(promise, fallback) {
   try { return await promise; }
   catch (e) { console.error("[api:safe]", e?.message || e); return fallback; }
 }
+// Aguarda uma promessa por NO MAXIMO `ms`. Se estourar (ou rejeitar), segue com
+// `fallback` sem travar nem derrubar a operacao principal. Usado em efeitos
+// colaterais best-effort (e-mail de notificacao do suporte): a gravacao do chamado
+// ja foi concluida e a resposta HTTP NUNCA pode ficar refem do provedor de e-mail
+// ate o limite do Netlify (o que vira HTTP 502). A promessa original segue/aborta
+// por conta propria — o e-mail ainda pode ser entregue, mas sem bloquear a resposta.
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch((e) => { console.error("[api:withTimeout]", e?.message || e); return fallback; }),
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
 async function ownerCrmRoutes(req, user, cseg, method) {
   const head = cseg[0] || "";
 
@@ -802,22 +844,58 @@ async function ownerCrmRoutes(req, user, cseg, method) {
     return ok({ byStage: map, totals, conversion, stages: CRM_STAGES });
   }
 
-  // ---- Auto-preenchimento por CNPJ (BrasilAPI — gratuita, sem chave) ----
+  // ---- Auto-preenchimento por CNPJ/CPF (bases publicas gratuitas, sem chave) ----
+  // Aceita CNPJ (14 digitos) E CPF (11 digitos). Para CNPJ, consulta a base
+  // publica da Receita com timeout duro e provedor de reserva. Para CPF nao existe
+  // base publica de consulta — entao apenas validamos e devolvemos vazio para
+  // preenchimento manual (sem erro). Nunca derruba a emissao de licenca.
   if (head === "cnpj" && cseg[1] && method === "GET") {
     const doc = (cseg[1] || "").replace(/\D/g, "");
-    if (doc.length !== 14) return fail("CNPJ invalido.");
-    try {
-      const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`);
-      if (!r.ok) return fail("CNPJ nao encontrado.", 404);
-      const d = await r.json();
-      return ok({ company: {
-        name: d.razao_social || d.nome_fantasia || "",
-        fantasy: d.nome_fantasia || "",
-        email: d.email || "",
-        phone: d.ddd_telefone_1 || "",
-        city: d.municipio || "", uf: d.uf || "",
-      } });
-    } catch (_) { return fail("Consulta de CNPJ indisponivel no momento.", 502); }
+
+    // CPF: 11 digitos. Sem base publica — aceitamos para preenchimento manual.
+    if (doc.length === 11) {
+      return ok({ kind: "cpf", company: {}, manual: true,
+        message: "CPF aceito. Não há base pública de CPF — preencha os dados manualmente." });
+    }
+    if (doc.length !== 14) return fail("Informe um CNPJ (14 dígitos) ou CPF (11 dígitos).");
+
+    // Mapeador tolerante: aceita o formato da BrasilAPI/Minha Receita (plano) e o
+    // do open.cnpja (aninhado), retornando sempre os mesmos campos.
+    const mapCnpj = (d) => {
+      const est = d.estabelecimento || {};
+      const addr = d.address || {};
+      const ph = Array.isArray(d.phones) && d.phones[0] ? d.phones[0] : null;
+      const em = Array.isArray(d.emails) && d.emails[0] ? d.emails[0] : null;
+      return {
+        name: d.razao_social || (d.company && d.company.name) || d.nome_fantasia || est.nome_fantasia || "",
+        fantasy: d.nome_fantasia || d.alias || est.nome_fantasia || "",
+        email: d.email || est.email || (em && em.address) || "",
+        phone: d.ddd_telefone_1
+          || (est.ddd1 && est.telefone1 ? `(${est.ddd1}) ${est.telefone1}` : "")
+          || (ph ? `(${ph.area || ""}) ${ph.number || ""}`.trim() : "") || "",
+        city: d.municipio || (est.cidade && est.cidade.nome) || addr.city || "",
+        uf: d.uf || (est.estado && est.estado.sigla) || addr.state || "",
+      };
+    };
+    // Busca JSON com timeout duro (sem isto, um provedor lento pendura a funcao
+    // ate o limite do Netlify e o cliente recebe HTTP 502 / "Erro de requisicao").
+    const getJson = async (url, ms) => {
+      const ac = new AbortController();
+      const tm = setTimeout(() => ac.abort(), ms);
+      try {
+        const r = await fetch(url, { signal: ac.signal, headers: { "Accept": "application/json" } });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (_) { return null; }
+      finally { clearTimeout(tm); }
+    };
+
+    // Provedor primario (BrasilAPI) + reserva (Minha Receita). Ambos gratuitos.
+    let d = await getJson(`https://brasilapi.com.br/api/cnpj/v1/${doc}`, 4500);
+    if (!d) d = await getJson(`https://minhareceita.org/${doc}`, 4500);
+    if (!d) d = await getJson(`https://open.cnpja.com/office/${doc}`, 4500);
+    if (!d) return fail("Não foi possível consultar este CNPJ agora. Preencha os dados manualmente.", 404);
+    return ok({ kind: "cnpj", company: mapCnpj(d) });
   }
 
   // ---- CONTATOS ----
@@ -1181,7 +1259,7 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     // do chamado — o protocolo ja foi gravado e deve ser sempre devolvido.
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await safe(sendEmail({ tenantId: tenant.id, to: inbox,
+      await withTimeout(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] ${ticketCategoryLabel(category)} — ${subject}`,
         type: "support",
         html: `<p><b>Novo chamado #${t.ticket_no}</b> (${escapeHtml(ticketCategoryLabel(category))}, prioridade ${escapeHtml(priority)})</p>
@@ -1191,7 +1269,7 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
           <p><b>Assunto:</b> ${escapeHtml(subject)}</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(description).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)}</p>` : ""}
-          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` }), null);
+          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` }), 2500, null);
     }
     return ok({ ticketNo: t.ticket_no, id: t.id, status: t.status });
   }
@@ -1241,12 +1319,12 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
       entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } });
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await safe(sendEmail({ tenantId: tenant.id, to: inbox,
+      await withTimeout(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] Resposta do cliente — ${t.subject}`,
         type: "support",
         html: `<p>O cliente respondeu no chamado <b>#${t.ticket_no}</b>:</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
-          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }), null);
+          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }), 2500, null);
     }
     return ok({ ok: true });
   }

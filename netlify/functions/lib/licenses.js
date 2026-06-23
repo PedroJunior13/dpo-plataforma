@@ -90,19 +90,40 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
   // Resiliente: se a sequence ainda nao migrou, segue sem numero (nao bloqueia a emissao).
   const licenseNo = await nextLicenseNo();
 
-  const lic = await one(sql`
-    INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason)
-    VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
-            'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason})
-    RETURNING *`);
+  // INSERT da licenca — RESILIENTE a banco parcialmente migrado. A emissao NUNCA
+  // pode ser impedida por uma coluna opcional ausente (license_no/pricing/
+  // issue_reason). Tentamos o INSERT completo; se uma coluna ainda nao existir,
+  // gravamos o essencial e complementamos cada campo opcional isoladamente.
+  let lic;
+  try {
+    lic = await one(sql`
+      INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until, license_no, pricing, issue_reason)
+      VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
+              'issued', ${plan.client_quota}, ${vu}, ${licenseNo}, ${price}, ${issueReason})
+      RETURNING *`);
+  } catch (e) {
+    console.error("[issueLicense] INSERT completo falhou, usando fallback base:", e?.message || e);
+    lic = await one(sql`
+      INSERT INTO licenses (tenant_id, plan_id, subscription_id, license_key, activation_token, status, client_quota, valid_until)
+      VALUES (${tid}, ${planId}, ${subscriptionId}, ${genLicenseKey()}, ${genActivationToken()},
+              'issued', ${plan.client_quota}, ${vu})
+      RETURNING *`);
+    try { await sql`UPDATE licenses SET license_no=${licenseNo}     WHERE id=${lic.id}`; lic.license_no = licenseNo; } catch {}
+    try { await sql`UPDATE licenses SET pricing=${price}            WHERE id=${lic.id}`; lic.pricing = price; } catch {}
+    try { await sql`UPDATE licenses SET issue_reason=${issueReason} WHERE id=${lic.id}`; lic.issue_reason = issueReason; } catch {}
+  }
 
+  // Registro de evento e BEST-EFFORT: a licenca ja existe e deve ser devolvida
+  // mesmo que a auditoria falhe (ex.: tabela de eventos parcialmente migrada).
   const priceLabel = price === "free" ? "cortesia (sem custo)" : "paga";
-  await licenseEvent({
-    licenseId: lic.id, tenantId: tid, event: "issued",
-    actorEmail: actor?.email,
-    after: { plan_id: planId, billing_type: billingType, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
-    note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
-  });
+  try {
+    await licenseEvent({
+      licenseId: lic.id, tenantId: tid, event: "issued",
+      actorEmail: actor?.email,
+      after: { plan_id: planId, billing_type: billingType, pricing: price, issue_reason: issueReason, valid_until: vu, license_no: licenseNo, version: lic.version },
+      note: `Licenca ${licenseNo || lic.license_key} emitida — ${priceLabel} (${plan.name}, ${billingType})${issueReason ? ` · motivo: ${issueReason}` : ""}.`,
+    });
+  } catch (e) { console.error("[issueLicense] licenseEvent nao-fatal:", e?.message || e); }
 
   return { license: lic, plan, link: activationLink(lic), message: invitationMessage(lic, plan, { name: tenant?.name }) };
 }
