@@ -7,42 +7,79 @@
 <title>Tutorial operacional — DPO PJ Protection</title>
 <link rel="stylesheet" href="/styles.css">
 <style>
-  /* Rolagem suave + compensação da barra fixa (60px) para os links do índice
-     pousarem exatamente no título da seção, e não atrás da barra. */
+  /* ──────────────────────────────────────────────────────────────────────
+     Tutorial v2 — índice lateral fixo (sticky) + rolagem só na vertical.
+     Antes, ao clicar num item do índice a página rolava "na diagonal":
+     isso acontecia quando algum elemento estourava a largura (overflow-x)
+     e o navegador rolava X e Y ao mesmo tempo. Agora travamos o overflow
+     horizontal (html,body{overflow-x:hidden} + min-width:0 na grade), então
+     a navegação é sempre um deslize VERTICAL limpo até a seção.
+     ────────────────────────────────────────────────────────────────────── */
   html{scroll-behavior:smooth}
-  .doc{max-width:820px;margin:0 auto}
+  html,body{overflow-x:hidden;max-width:100%}
+  *{box-sizing:border-box}
+
+  .doc{max-width:1140px;margin:0 auto}
   .doc h1{font-size:27px;line-height:1.25;margin:0 0 6px}
-  .doc h2{font-size:20px;margin-top:46px;padding:16px 0 0 14px;border-top:1px solid var(--line);border-left:3px solid var(--gold);scroll-margin-top:84px;line-height:1.3}
-  .doc h3{font-size:15.5px;margin-top:26px;color:var(--gold2);scroll-margin-top:84px}
-  .doc p,.doc li{color:var(--mut);line-height:1.7;font-size:14.5px}
-  .doc>p{max-width:72ch}
+  .doc h2{font-size:20px;margin-top:46px;padding:16px 0 0 14px;border-top:1px solid var(--line);border-left:3px solid var(--gold);scroll-margin-top:90px;line-height:1.3}
+  .doc h3{font-size:15.5px;margin-top:26px;color:var(--gold2);scroll-margin-top:90px}
+  .doc p,.doc li{color:var(--mut);line-height:1.7;font-size:14.5px;overflow-wrap:break-word}
   .doc ol,.doc ul{padding-left:22px}
   .doc li{margin:7px 0}
-  /* índice em grade de 2 colunas, cada item como “cartão-linha” clicável */
-  .toc-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:12px}
-  @media(max-width:680px){.toc-grid{grid-template-columns:1fr}}
-  .toc-grid a{display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:10px;color:var(--txt);transition:.15s;font-size:13.5px}
-  .toc-grid a:hover{border-color:var(--gold);background:rgba(217,164,65,.07)}
-  .toc-grid a .ix{flex:none;width:24px;height:24px;border-radius:7px;background:rgba(217,164,65,.14);color:var(--gold2);font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center}
+
+  /* Cabeçalho do tutorial fica em largura total; abaixo entra a grade
+     [índice lateral | conteúdo]. */
+  .doc-intro>p{max-width:78ch}
+
+  .doc-layout{display:grid;grid-template-columns:256px minmax(0,1fr);gap:36px;align-items:start;margin-top:10px}
+  .doc-body{min-width:0}                 /* CRÍTICO: impede o conteúdo de estourar a largura da grade (mata a diagonal) */
+  .doc-body p,.doc-body li{max-width:74ch}
+
+  /* Índice lateral fixo */
+  .toc-side{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 96px);overflow:auto;padding-right:4px}
+  .toc-side .toc-h{font-size:11.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--gold2);font-weight:800;margin:0 0 9px 4px}
+  .toc-list{display:flex;flex-direction:column;gap:3px}
+  .toc-list a{display:flex;gap:9px;align-items:center;padding:7px 10px;border-radius:9px;color:var(--mut);font-size:12.8px;line-height:1.35;border:1px solid transparent;transition:.14s;text-decoration:none}
+  .toc-list a:hover{background:rgba(217,164,65,.07);color:var(--txt);border-color:rgba(217,164,65,.25)}
+  .toc-list a.active{background:rgba(217,164,65,.13);border-color:rgba(217,164,65,.4);color:var(--gold2);font-weight:700}
+  .toc-list a .ix{flex:none;width:22px;height:22px;border-radius:6px;background:rgba(217,164,65,.14);color:var(--gold2);font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .toc-list a.active .ix{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205}
+
   .toplink{display:inline-flex;align-items:center;gap:5px;margin-top:16px;color:var(--gold2);font-size:12px;font-weight:700;text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:5px 11px;transition:.15s}
   .toplink:hover{border-color:var(--gold);background:rgba(217,164,65,.08)}
+
   .doc .step{align-items:flex-start}
   .doc .step>div:last-child{padding-top:3px}
   .step{display:flex;gap:14px;align-items:flex-start;margin:14px 0}
   .step .n{flex:none;width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;font-weight:800;display:flex;align-items:center;justify-content:center}
   .step .n.ok{background:linear-gradient(135deg,var(--green),#5fd07a);color:#06210d}
-  .note{background:rgba(91,140,196,.10);border:1px solid rgba(91,140,196,.3);border-radius:10px;padding:12px 14px;margin:14px 0;color:#cfe0f7;font-size:13.5px}
+  .note{background:rgba(91,140,196,.10);border:1px solid rgba(91,140,196,.3);border-radius:10px;padding:12px 14px;margin:14px 0;color:#cfe0f7;font-size:13.5px;overflow-wrap:break-word}
   .note.warn{background:rgba(224,168,0,.10);border-color:rgba(224,168,0,.35);color:#f3d171}
   .note.danger{background:rgba(224,86,107,.10);border-color:rgba(224,86,107,.35);color:#ffb9c3}
   .note.ok{background:rgba(55,178,77,.10);border-color:rgba(55,178,77,.35);color:#bdf0c8}
-  .toc a{display:block;padding:4px 0;color:var(--gold2)}
-  code{background:#0b1a31;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#cfe0f7}
+  code{background:#0b1a31;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#cfe0f7;overflow-wrap:anywhere}
   .tab{display:inline-block;background:rgba(217,164,65,.12);border:1px solid rgba(217,164,65,.35);color:var(--gold2);border-radius:7px;padding:1px 9px;font-weight:700;font-size:12.5px}
   .btnref{display:inline-block;background:#0b1a31;border:1px solid var(--line);border-radius:7px;padding:1px 8px;font-weight:700;font-size:12.5px;color:var(--txt)}
   .new{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;border-radius:99px;padding:1px 9px;font-size:10.5px;font-weight:800;letter-spacing:.4px;vertical-align:middle;margin-left:6px}
   .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0;padding:14px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:12px}
   .flow .b{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-weight:700;font-size:13px;color:var(--txt)}
   .flow .ar{color:var(--gold2);font-weight:800}
+
+  /* Botão flutuante "voltar ao topo" */
+  .fab-top{position:fixed;right:18px;bottom:18px;z-index:50;width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1a1205;font-size:20px;font-weight:800;box-shadow:0 6px 20px rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;line-height:1}
+  .fab-top.show{display:flex}
+
+  /* ── Mobile / telas estreitas: índice vira grade no topo, conteúdo em 1 coluna ── */
+  @media(max-width:920px){
+    .doc-layout{grid-template-columns:1fr;gap:0}
+    .toc-side{position:static;max-height:none;overflow:visible;margin:6px 0 8px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+    .toc-list{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+  }
+  @media(max-width:560px){
+    .doc h2{margin-top:38px}
+    .toc-list{grid-template-columns:1fr}
+    .fab-top{right:14px;bottom:14px;width:42px;height:42px}
+  }
 </style>
 </head>
 <body>
@@ -51,39 +88,45 @@
 
 <main class="wrap section-pad">
 <div class="doc">
-  <h1 id="topo">Tutorial operacional do dono — vendas e gestão</h1>
-  <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.7</b>).
-     Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
-     <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
-     <b>Integrações (NFS-e)</b>, cobrança, upgrade e auditoria. Cada item abaixo cita o botão e a aba exatos da tela.</p>
-
-  <div class="note ok" style="margin:14px 0"><b>Como navegar este tutorial:</b> clique em qualquer item do índice para pular direto à seção. Ao fim de cada seção há o atalho <b>“↑ Voltar ao índice”</b>. No painel, lembre-se de que <b>todo bloco/indicador tem o selo ⓘ</b> — clique no bloco (ou no selo) para abrir a explicação daquele número sem sair da tela.</div>
-
-  <div class="card toc" style="margin:18px 0">
-    <b>Índice</b>
-    <div class="toc-grid">
-      <a href="#painel"><span class="ix">1</span>Visão geral do painel (as 7 abas)</a>
-      <a href="#caminhos"><span class="ix">2</span>Os dois caminhos de entrada do cliente</a>
-      <a href="#compras"><span class="ix">3</span>Compras → gerar licença em 1 clique ⭐</a>
-      <a href="#emitir"><span class="ix">4</span>Emitir licença manualmente (venda assistida)</a>
-      <a href="#ativacao"><span class="ix">5</span>Ativação: Conta → 2FA → Licença ⭐</a>
-      <a href="#gerenciar"><span class="ix">6</span>Drawer “Gerenciar”: suporte, cota e kill-switch</a>
-      <a href="#crm"><span class="ix">7</span>CRM: funil, contatos e campanhas ⭐</a>
-      <a href="#suporte"><span class="ix">8</span>Suporte (Service Desk): fila, SLA e alertas ⭐</a>
-      <a href="#dashboard"><span class="ix">9</span>Painel (dashboard): leitura rápida</a>
-      <a href="#financeiro"><span class="ix">10</span>Financeiro e NFS-e</a>
-      <a href="#integracoes"><span class="ix">11</span>Integrações: NFS-e e pagamentos ⭐</a>
-      <a href="#cobranca"><span class="ix">12</span>Cobrança automática e vencimentos</a>
-      <a href="#seguranca"><span class="ix">13</span>Segurança: 2FA, bloqueio e blindagem ⭐</a>
-      <a href="#auditoria"><span class="ix">14</span>Auditoria e versionamento</a>
-      <a href="#demo"><span class="ix">15</span>Link de demonstração (trava em 7 dias) ⭐</a>
-      <a href="#checklist"><span class="ix">16</span>Checklist rápido</a>
-    </div>
+  <div class="doc-intro">
+    <h1 id="topo">Tutorial operacional do dono — vendas e gestão</h1>
+    <p>Guia completo e <b>passo a passo</b> do painel <code>/painel</code> (plataforma <b>v2.8.8</b>).
+       Do primeiro contato com o cliente à ativação com <b>2FA obrigatório</b>, passando por
+       <b>Compras → gerar a licença em 1 clique</b>, <b>Service Desk de suporte (chamados/SLA)</b>, CRM,
+       <b>Integrações (NFS-e)</b>, cobrança, upgrade e auditoria. Cada item cita o botão e a aba exatos da tela.</p>
+    <div class="note ok" style="margin:14px 0"><b>Como navegar este tutorial:</b> o <b>índice fica fixo à esquerda</b> (no celular, no topo) — clique em qualquer item para deslizar direto à seção, e o item da seção atual fica <b>destacado</b> automaticamente. Use o botão dourado <b>↑</b> no canto para voltar ao topo. No painel, lembre-se de que <b>todo bloco/indicador tem o selo ⓘ</b> — clique no bloco (ou no selo) para abrir a explicação daquele número sem sair da tela.</div>
   </div>
+
+  <div class="doc-layout">
+    <!-- ÍNDICE LATERAL FIXO -->
+    <aside class="toc-side" aria-label="Índice do tutorial">
+      <div class="toc-h">Índice</div>
+      <nav class="toc-list">
+        <a href="#painel"><span class="ix">1</span>Visão geral do painel (as 7 abas)</a>
+        <a href="#caminhos"><span class="ix">2</span>Os dois caminhos de entrada do cliente</a>
+        <a href="#compras"><span class="ix">3</span>Compras → gerar licença em 1 clique ⭐</a>
+        <a href="#emitir"><span class="ix">4</span>Emitir licença manualmente (venda assistida)</a>
+        <a href="#ativacao"><span class="ix">5</span>Ativação: Conta → 2FA → Licença ⭐</a>
+        <a href="#gerenciar"><span class="ix">6</span>Drawer “Gerenciar”: suporte, cota e kill-switch</a>
+        <a href="#crm"><span class="ix">7</span>CRM: funil, contatos e campanhas ⭐</a>
+        <a href="#suporte"><span class="ix">8</span>Suporte (Service Desk): fila, SLA e alertas ⭐</a>
+        <a href="#dashboard"><span class="ix">9</span>Painel (dashboard): leitura rápida</a>
+        <a href="#financeiro"><span class="ix">10</span>Financeiro e NFS-e</a>
+        <a href="#integracoes"><span class="ix">11</span>Integrações: NFS-e e pagamentos ⭐</a>
+        <a href="#cobranca"><span class="ix">12</span>Cobrança automática e vencimentos</a>
+        <a href="#seguranca"><span class="ix">13</span>Segurança: 2FA, bloqueio e blindagem ⭐</a>
+        <a href="#auditoria"><span class="ix">14</span>Auditoria e versionamento</a>
+        <a href="#demo"><span class="ix">15</span>Link de demonstração (trava em 7 dias) ⭐</a>
+        <a href="#checklist"><span class="ix">16</span>Checklist rápido</a>
+      </nav>
+    </aside>
+
+    <!-- CONTEÚDO -->
+    <div class="doc-body">
 
   <!-- 1 -->
   <h2 id="painel">1. Visão geral do painel</h2>
-  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.7</span> ao lado do menu.</p>
+  <p>No topo ficam as abas. O número de versão da plataforma aparece no selo <span class="btnref">v2.8.8</span> ao lado do menu.</p>
   <ul>
     <li><span class="tab">Painel</span> — visão do negócio: indicadores (KPIs clicáveis), receita, funil, vencimentos e atividade recente.</li>
     <li><span class="tab">Compras</span> <span class="new">NOVO</span> — toda transação do checkout cai aqui; é onde você <b>gera a licença do módulo comprado em 1 clique</b>.</li>
@@ -94,10 +137,10 @@
     <li><span class="tab">Integrações</span> <span class="new">NOVO</span> — configure a <b>NFS-e (Focus NFe)</b> direto pelo painel (token, CNPJ, inscrição municipal, código do município, item da lista, alíquota e emissão automática) e veja o status dos <b>gateways de pagamento</b>. Veja o item 11.</li>
   </ul>
   <p>Ainda na barra: <span class="btnref">Consultoria ↗</span> (entra no seu ambiente ilimitado de consultoria), <span class="btnref">Tutorial</span> (esta página) e <span class="btnref">Sair</span>.</p>
-  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
   <div class="note"><b>Auditoria saiu da barra de menu</b> <span class="new">NOVO</span> — agora a trilha imutável fica <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b>, mostrando os <b>últimos 15 eventos</b> com <b>barra de rolagem</b> e a <b>origem/local</b> de cada registro (IP, dispositivo e geolocalização aproximada). Veja o item 13.</div>
   <div class="note">Os 5 cartões do topo do <span class="tab">Painel</span> são <b>clicáveis</b>: clicar leva direto à aba correspondente (ex.: “Compras a liberar” abre <span class="tab">Compras</span>).</div>
   <div class="note ok"><b>Novo:</b> todo bloco de informação do painel tem um selo <b>ⓘ</b>. Clique no bloco (ou no selo) para abrir uma <b>janela com a explicação daquele bloco</b> (sem sair da tela — a janela é apenas informativa, não redireciona). Use sempre que tiver dúvida sobre o que um número ou gráfico significa.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 2 -->
   <h2 id="caminhos">2. Os dois caminhos de entrada do cliente</h2>
@@ -105,8 +148,8 @@
     <li><b>Autoatendimento:</b> o cliente acessa <code>/checkout.html</code>, escolhe o módulo e paga. A transação aparece automaticamente na aba <span class="tab">Compras</span> para você liberar.</li>
     <li><b>Venda assistida (você no controle):</b> você cria o cliente e emite a licença pelo painel (item 4) e envia o link você mesmo. Ideal para negociação e cobrança avulsa.</li>
   </ul>
-  <div class="note">Módulos (a diferença é só o <b>número de clientes</b>): <b>Básico</b> 25 · <b>Intermediário</b> 100 · <b>Avançado</b> 150.
-    Recorrente tem <b>5% de desconto</b> e renova sozinho; avulso bloqueia no vencimento. Todos os módulos têm o <b>mesmo ambiente</b> — por isso upgrade/downgrade nunca perde dados.</div>
+  <div class="note">Módulos (a diferença é só o <b>número de clientes</b>): <b>Básico</b> 25 · <b>Intermediário</b> 50 · <b>Avançado</b> 100.
+    Acima de 100, use o módulo <b>Personalizado</b> (item 4) para definir a cota e o valor sob medida. Recorrente tem <b>5% de desconto</b> e renova sozinho; avulso bloqueia no vencimento. Todos os módulos têm o <b>mesmo ambiente</b> — por isso upgrade/downgrade nunca perde dados.</div>
   <div class="note warn"><b>Cobrança recorrente é exclusiva do cartão de crédito</b> <span class="new">NOVO</span> — no checkout, ao escolher <b>Recorrente (−5%)</b> a forma de pagamento trava automaticamente em <b>Cartão</b> (PIX e boleto ficam desabilitados, pois não renovam sozinhos). Se o cliente escolher PIX/boleto, a cobrança volta para <b>Avulsa (mensal)</b>. Essa regra é validada também no servidor — não há como burlar.</div>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
@@ -124,6 +167,7 @@
   <div class="step"><div class="n">3</div><div>Clique em <span class="btnref">Gerar licença</span> e confirme. A chave é criada no perfil do cliente, no módulo comprado.</div></div>
   <div class="step"><div class="n ok">4</div><div>Abre a janela com o <b>Número da licença</b> (ex.: <code>DPO-L-2026-1001</code>), o <b>Link de ativação</b>, a <b>chave da Licença</b> e a <b>Mensagem pronta</b> — cada um com botão <b>Copiar</b>, e <b>Enviar no WhatsApp</b> quando houver telefone.</div></div>
   <div class="note ok"><b>Envio automático ao comprador</b> <span class="new">NOVO</span> — ao clicar em <span class="btnref">Gerar licença</span>, a plataforma já <b>envia por e-mail</b>, para o endereço do comprador, a <b>licença + as credenciais de acesso</b> (com o botão “Ativar meu acesso”). A janela confirma para qual e-mail foi enviado. Você não precisa fazer mais nada — o WhatsApp/copiar continuam disponíveis como reforço. Em paralelo, o comprador é <b>incluído automaticamente no CRM</b> (estágio “Cliente”) e a <b>NFS-e é emitida sozinha</b> (item 10). A situação vira <b>“Licença gerada”</b>; use <span class="btnref">Ver licença</span> para rever e <span class="btnref">Atualizar</span> para recarregar.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 4 -->
   <h2 id="emitir">4. Emitir licença manualmente (venda assistida)</h2>
@@ -133,7 +177,7 @@
     <ul style="margin:6px 0 0 16px">
       <li><b>Paga (com cobrança)</b> — define a <b>Cobrança</b>: Avulsa (bloqueia no vencimento) ou Recorrente (renova automático, −5%). Escolha esta opção quando houver <b>faturamento</b>.</li>
       <li><b>Cortesia — avulsa SEM custo</b> — gera a licença <b>gratuita</b> (parceria, teste estendido, brinde, cliente vitalício). Informe a <b>Validade em dias</b> (padrão 365) e o <b>Motivo da cortesia</b> (obrigatório, para controle).</li>
-      <li><b>Personalizado</b> <span class="new">NOVO</span> — ao escolher o módulo <b>Personalizado</b>, aparecem dois campos próprios: <b>Qtd. de clientes</b> (você define o limite sob medida — ex.: 200) e <b>Valor (R$)</b> (o valor combinado, opcional/informativo). O limite definido é <b>aplicado automaticamente</b>: o ambiente do cliente trava o cadastro acima da cota, igual aos demais módulos. Útil para acordos fora da tabela padrão.</li>
+      <li><b>Personalizado</b> <span class="new">NOVO</span> — ao escolher o módulo <b>Personalizado</b>, aparecem dois campos próprios: <b>Qtd. de clientes</b> (você define o limite sob medida — ex.: 200) e <b>Valor (R$)</b> (o valor combinado, opcional/informativo). O limite definido é <b>aplicado automaticamente</b>: o ambiente do cliente trava o cadastro acima da cota, igual aos demais módulos. Útil para acordos fora da tabela padrão (acima de 100 clientes).</li>
     </ul>
     <div class="step" style="margin-top:8px"><div class="n">3b</div><div><b>Validade / vencimento</b> — escolha <b>Mensal (30 dias)</b>, <b>Anual (1 ano, com desconto)</b> ou <b>Personalizada (escolher dias)</b>. Para mensal/anual você pode informar o <b>Dia de vencimento (1–28)</b>; para personalizada, a <b>quantidade de dias</b>. A licença avulsa <b>bloqueia automaticamente no vencimento</b> (com aviso 3 dias antes e período de carência) — tudo gerido pelo robô diário de cobrança.</div></div>
     <div class="note" style="margin-top:8px">A tela se ajusta ao que você escolhe: <b>Paga</b> abre os campos de cobrança; <b>Cortesia</b> abre validade + motivo; <b>Personalizado</b> abre quantidade de clientes + valor. Assim você nunca emite uma cobrança sem querer (nem deixa de cobrar quando deveria).</div>
@@ -141,6 +185,7 @@
   <div class="step"><div class="n ok">4</div><div>Clique em <span class="btnref">Gerar licença e link</span>. Aparecem o <b>Nº da licença</b> (ex.: <code>DPO-L-2026-1001</code>), um <b>selo Paga/Cortesia</b>, o <b>Link de ativação</b>, a <b>Licença</b> (ex.: <code>DPO-XXXX-XXXX-XXXX</code>) e a <b>Mensagem pronta</b>. Use <b>Copiar mensagem</b> ou <b>Enviar no WhatsApp</b>; <span class="btnref">Emitir outra</span> recomeça.</div></div>
   <div class="note ok"><b>Controle total de cada licença</b> <span class="new">NOVO</span> — toda licença gerada (paga ou cortesia) recebe <b>número sequencial</b> + <b>versão</b> e fica registrada na <span class="tab">Auditoria</span>. Na lista de <span class="tab">Licenças</span> cada linha mostra o selo <b>Paga</b> ou <b>Cortesia</b> (com o motivo no “Gerenciar”), permitindo distinguir vendas de brindes a qualquer momento.</div>
   <div class="note">Para reenviar a qualquer momento: aba <span class="tab">Licenças</span> → <span class="btnref">Gerenciar</span> → <span class="btnref">Enviar/Copiar link</span>. Todo envio fica registrado na <span class="tab">Auditoria</span>.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 5 -->
   <h2 id="ativacao">5. Ativação pelo cliente: Conta → 2FA → Licença <span class="new">NOVO</span></h2>
@@ -156,6 +201,7 @@
     <li><b>Passo 3 — Licença:</b> a licença já vem preenchida pelo link; ele confirma e o módulo é <b>destravado</b>. A partir daí entra pela tela de login em <code>/</code> e cai no <b>perfil certo</b> do módulo contratado.</li>
   </ol>
   <div class="note">Roteamento automático: se a conta já está vinculada → vai direto para “concluído”; se falta o 2FA → abre a tela de 2FA; senão → tela de licença. O cliente nunca cai no perfil errado.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 6 -->
   <h2 id="gerenciar">6. Drawer “Gerenciar”: suporte, módulo/cota e kill-switch</h2>
@@ -195,6 +241,7 @@
   </ul>
   <div class="note ok"><b>Teste de ponta a ponta sem poluir a base</b> <span class="new">NOVO</span> — agora você consegue <b>gerar uma licença avulsa de teste</b>, validar todo o caminho (emissão → link → ativação) e depois <b>excluí-la</b> (a licença, ou o cliente inteiro) sem deixar resíduo. Não há mais “impedimento de dados” para experimentar à vontade.</div>
   <div class="note danger"><b>Irreversível.</b> A exclusão remove os registros do banco em definitivo e fica gravada na <span class="tab">Auditoria</span> (o registro de auditoria é mantido mesmo após a remoção em cascata). Nunca use em um cliente de produção ativo — para esses casos use <b>Inativar</b>, <b>Suspender</b> ou <b>Revogar</b>.</div>
+  <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 7 -->
   <h2 id="crm">7. CRM: funil, contatos, atividades e campanhas <span class="new">NOVO</span></h2>
@@ -241,7 +288,7 @@
   <div class="step"><div class="n ok">3</div><div>Use o seletor de <b>status</b> para mover o chamado: <b>Aberto → Em andamento → Aguardando cliente → Resolvido → Fechado</b>. Também dá para ajustar a <b>prioridade</b>. Cada mudança fica registrada.</div></div>
   <div class="note warn"><b>Prazos de 1ª resposta (SLA):</b> Urgente <b>4h</b> · Alta <b>8h</b> · Normal <b>24h</b> · Baixa <b>48h</b>. Quando o prazo vira, o chamado entra em <b>SLA estourado</b> (vermelho) no KPI e na linha — priorize esses.</div>
   <div class="note ok">Tudo do Service Desk (abertura, resposta, mudança de status) entra na <span class="tab">Auditoria</span>. Funciona para <b>licenças de clientes e de consultores</b>.</div>
-  <div class="note ok"><b>Anexo de chamado mais confiável</b> <span class="new">NOVO</span> — abrir ou responder um chamado <b>com arquivo anexado</b> não dá mais erro de comunicação (o antigo <b>HTTP 502</b>). O chamado é gravado <b>primeiro</b> e o e-mail de aviso sai em segundo plano com <b>tempo-limite</b> — ou seja, mesmo que o servidor de e-mail demore, o anexo é salvo e a tela confirma o envio normalmente. Vale para <b>todas as licenças, atuais e futuras</b>.</div>
+  <div class="note ok"><b>Suporte à prova de “HTTP 502”</b> <span class="new">NOVO</span> — abrir um chamado, responder e <b>trocar mensagens a qualquer momento</b> sempre conclui, com ou sem anexo. A gravação principal tem <b>tempo-limite rígido</b> (se o banco demorar, aparece um aviso claro para tentar de novo, em vez de um 502 sem explicação) e <b>todo o resto — e-mail de aviso e auditoria — roda em segundo plano</b>, sem nunca segurar a resposta. O <b>canal principal é o próprio chamado dentro da plataforma</b> (gravado primeiro e sempre); o e-mail é só um aviso extra. Vale para a <b>consultoria do dono</b>, para o <b>suporte dentro de cada cliente</b> e para <b>todas as licenças, atuais e futuras</b>. Há ainda um <b>diagnóstico de saúde</b> do suporte em <code>/api/app/support/health</code>.</div>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
   <!-- 9 -->
@@ -287,7 +334,7 @@
   <p>O cartão <b>Pagamentos &amp; avisos</b> (somente leitura) lista os <b>gateways</b> ativos detectados pela plataforma. A configuração das chaves de gateway permanece nas variáveis de ambiente do Netlify (segurança), e o status também aparece no bloco <b>Integrações</b> do <span class="tab">Painel</span>.</p>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <!-- 11 -->
+  <!-- 12 -->
   <h2 id="cobranca">12. Cobrança automática e vencimentos</h2>
   <p>Todos os dias o sistema, sozinho:</p>
   <ol>
@@ -298,7 +345,7 @@
   </ol>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <!-- 12 -->
+  <!-- 13 -->
   <h2 id="seguranca">13. Segurança: 2FA, bloqueio e blindagem <span class="new">NOVO</span></h2>
   <ul>
     <li><b>2FA obrigatório no cadastro</b> (item 5): todo assinante ativa a verificação em duas etapas antes de usar a plataforma.</li>
@@ -309,11 +356,11 @@
     <li><b>Trava por inatividade <span class="new">NOVO</span>:</b> após <b>20 minutos parado</b> (sem mouse, teclado, toque ou rolagem), a tela é <b>bloqueada</b> e a sessão encerrada, exigindo <b>novo login</b> — vale para o <b>seu Painel</b> e para o <b>ambiente dos assinantes</b>, em <b>desktop e celular</b>. A demonstração pública não expira por inatividade.</li>
     <li><b>Blindagem do servidor:</b> cabeçalhos de segurança (CSP, HSTS, anti-clickjacking e anti-sniffing) protegem contra invasão, XSS e incorporação maliciosa. A API nunca é cacheada.</li>
     <li><b>Suporte rastreável:</b> todo acesso de suporte ao ambiente do cliente é registrado.</li>
-    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.7</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
+    <li><b>Controle de versão:</b> a versão da plataforma fica visível no selo do menu (hoje <b>v2.8.8</b>) — serve de confirmação de que o deploy subiu a versão certa.</li>
   </ul>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <!-- 13 -->
+  <!-- 14 -->
   <h2 id="auditoria">14. Auditoria e versionamento <span class="new">NOVO</span></h2>
   <p>A trilha de auditoria saiu da barra de menu e agora vive <b>no fim do</b> <span class="tab">Painel</span>, no bloco <b>“Auditoria”</b> — os <b>últimos 15 eventos</b> em uma área com <b>barra de rolagem</b> e o botão <span class="btnref">Atualizar</span>. É um registro <b>imutável</b> de todos os eventos — login, conta bloqueada, compra, licença emitida, <b>licença gerada da compra</b>, <b>licença avulsa sem custo</b>, licença ativada, módulo alterado, assinante criado, cliente inativado/reativado, <b>acesso de suporte</b>, acesso regenerado, <b>2FA resetado/ativado/desativado</b>, <b>senha redefinida (suporte)</b>, senha do dono definida, demonstração recriada, <b>chamado de suporte aberto/respondido/status alterado (Service Desk)</b> e ações de CRM (contato, estágio, campanha).</p>
   <ul>
@@ -329,7 +376,7 @@
   <div class="note">A demonstração <b>pública</b> (botão “Ver demonstração” do site, sem token) abre um sandbox autossuficiente <b>sem validade</b> — serve só para conhecer a interface. A trava de 7 dias vale para o <b>link oficial gerado no painel</b>.</div>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <!-- 15 -->
+  <!-- 16 -->
   <h2 id="checklist">16. Checklist rápido</h2>
   <ol>
     <li><b>Pagou sozinho?</b> Aba <span class="tab">Compras</span> → <span class="btnref">Gerar licença</span> → enviar link/mensagem.</li>
@@ -346,8 +393,50 @@
   </ol>
   <a class="toplink" href="#topo">↑ Voltar ao índice</a>
 
-  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.7.</p>
+  <p class="small muted" style="margin-top:30px">PJ Technology Solutions · CNPJ 36.741.351/0001-09 · DPO PJ Protection · Plataforma v2.8.8.</p>
+
+    </div><!-- /.doc-body -->
+  </div><!-- /.doc-layout -->
 </div>
 </main>
+
+<button id="fabTop" class="fab-top" type="button" title="Voltar ao topo" aria-label="Voltar ao topo">↑</button>
+
+<script>
+/* Índice lateral: destaca a seção atual (scroll-spy) + botão flutuante "voltar ao topo".
+   Sem dependências; degrada com elegância se algo faltar. */
+(function(){
+  var fab   = document.getElementById('fabTop');
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc-list a'));
+  var map = {};
+  var sections = [];
+  links.forEach(function(a){
+    var id = (a.getAttribute('href') || '').replace('#','');
+    var el = id ? document.getElementById(id) : null;
+    if (el){ map[id] = a; sections.push(el); }
+  });
+
+  function onScroll(){
+    var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    if (fab){ if (y > 360) fab.classList.add('show'); else fab.classList.remove('show'); }
+    var current = null;
+    for (var i = 0; i < sections.length; i++){
+      if (sections[i].getBoundingClientRect().top <= 130) current = sections[i].id;
+      else break;
+    }
+    for (var k = 0; k < links.length; k++) links[k].classList.remove('active');
+    if (current && map[current]) map[current].classList.add('active');
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  if (fab){
+    fab.addEventListener('click', function(){
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+  onScroll();
+})();
+</script>
 </body>
 </html>

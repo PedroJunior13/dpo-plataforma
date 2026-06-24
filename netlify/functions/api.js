@@ -23,10 +23,19 @@ import { resetDemo, demoStatus, userFromDemoToken } from "./lib/demo.js";
 
 export const config = { path: "/api/*" };
 
-export default async function handler(req) {
+// Ponte para o `waitUntil` do runtime (Netlify): permite concluir efeitos
+// colaterais (e-mail/auditoria) DEPOIS de a resposta HTTP ja ter sido enviada,
+// sem segurar a resposta nem arriscar o limite de tempo da funcao (HTTP 502).
+// Definido a cada request no inicio do handler (a funcao atende 1 request por vez).
+let _bgWaitUntil = null;
+
+export default async function handler(req, context) {
   const method = req.method;
   const path = routePath(req); // ex.: "owner/licenses"
   const seg = path.split("/");
+
+  // Captura o waitUntil do runtime (quando existir) para tarefas em 2o plano.
+  _bgWaitUntil = (context && typeof context.waitUntil === "function") ? context.waitUntil.bind(context) : null;
 
   // Captura a origem (ip + dispositivo + geolocalizacao) uma unica vez por request,
   // para que toda a trilha de auditoria registre DE ONDE a acao partiu.
@@ -894,6 +903,17 @@ function withTimeout(promise, ms, fallback = null) {
     new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
   ]);
 }
+// Efeito colateral em SEGUNDO PLANO: a resposta HTTP NUNCA espera por ele e ele
+// NUNCA derruba a funcao. Engole rejeicoes (sem unhandledRejection => sem HTTP 502)
+// e, quando o runtime oferece waitUntil, mantem a tarefa viva apos a resposta para
+// que o e-mail/auditoria ainda completem. E o que blinda a abertura de chamados:
+// o ticket e gravado e devolvido na hora; aviso por e-mail e auditoria sao extras.
+function runBackground(promise) {
+  if (!promise) return;
+  const p = Promise.resolve(promise).catch((e) => console.error("[api:bg]", e?.message || e));
+  if (_bgWaitUntil) { try { _bgWaitUntil(p); } catch (_) { /* runtime sem waitUntil: roda mesmo assim */ } }
+  return p;
+}
 async function ownerCrmRoutes(req, user, cseg, method) {
   const head = cseg[0] || "";
 
@@ -1242,24 +1262,26 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     if (!t) return fail("Chamado nao encontrado.", 404);
     const newStatus = TICKET_STATUSES.includes(b.status) ? b.status : "aguardando_cliente";
     const att = sanitizeAttachment(b.attachment);
-    // Mensagem sem o blob (RETURNING id) + anexo em UPDATE separado com teto de tempo:
-    // resposta do suporte nunca trava por causa de arquivo pesado (evita HTTP 502).
-    const msg = await one(sql`INSERT INTO support_ticket_messages
+    // Mensagem com TETO de tempo (RETURNING id). Se expirar/falhar, erro CLARO em
+    // vez de pendurar a funcao ate o limite do Netlify (HTTP 502).
+    const msg = await withTimeout(one(sql`INSERT INTO support_ticket_messages
       (ticket_id, author_role, author_email, author_name, body)
       VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)})
-      RETURNING id`);
-    if (att) {
-      await withTimeout(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
-        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`, 5000, null);
-    }
-    await sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
+      RETURNING id`), 8000, undefined);
+    if (!msg || !msg.id) return fail("Nao foi possivel registrar a resposta agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
+    await withTimeout(sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
       first_response_at=coalesce(first_response_at, now()),
       resolved_at=${newStatus === "resolvido" || newStatus === "fechado" ? new Date().toISOString() : null}
-      WHERE id=${t.id}`;
-    await withTimeout(audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
-      entity: "support_ticket", entityId: t.id, detail: { status: newStatus, attachment: att?.name || null } }), 2000, null);
+      WHERE id=${t.id}`, 5000, null);
+    // Extras em SEGUNDO PLANO — a resposta volta na hora.
+    if (att) {
+      runBackground(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`);
+    }
+    runBackground(audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_reply",
+      entity: "support_ticket", entityId: t.id, detail: { status: newStatus, attachment: att?.name || null } }));
     if (t.opener_email) {
-      await withTimeout(sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
+      runBackground(sendEmail({ tenantId: t.tenant_id, to: t.opener_email,
         subject: `[Chamado #${t.ticket_no}] Resposta do suporte — ${t.subject}`,
         type: "support",
         html: `<p>Olá ${escapeHtml(t.opener_name || "")},</p>
@@ -1267,7 +1289,7 @@ async function ownerSupportRoutes(req, user, sseg, method) {
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (acesse a plataforma para baixar)</p>` : ""}
           <p>Acesse a plataforma, menu <b>Suporte</b>, para acompanhar e responder.</p>
-          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }), 2500, null);
+          <p style="color:#888;font-size:12px">DPO PJ Protection — Suporte</p>` }));
     }
     return ok({ ok: true, status: newStatus, messageId: msg.id });
   }
@@ -1279,11 +1301,12 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     if (!t) return fail("Chamado nao encontrado.", 404);
     const status = TICKET_STATUSES.includes(b.status) ? b.status : t.status;
     const priority = TICKET_PRIORITIES.includes(b.priority) ? b.priority : t.priority;
-    const upd = await one(sql`UPDATE support_tickets SET status=${status}, priority=${priority}, updated_at=now(),
+    const upd = await withTimeout(one(sql`UPDATE support_tickets SET status=${status}, priority=${priority}, updated_at=now(),
       resolved_at=${status === "resolvido" || status === "fechado" ? new Date().toISOString() : null}
-      WHERE id=${t.id} RETURNING *`);
-    await audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_status_changed",
-      entity: "support_ticket", entityId: t.id, detail: { status, priority } });
+      WHERE id=${t.id} RETURNING *`), 8000, undefined);
+    if (!upd || !upd.id) return fail("Nao foi possivel atualizar o chamado agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
+    runBackground(audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_status_changed",
+      entity: "support_ticket", entityId: t.id, detail: { status, priority } }));
     return ok({ ticket: { ...upd, attachment_data: undefined, has_attachment: !!upd.attachment_name } });
   }
 
@@ -1300,11 +1323,40 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     return ok({ categories: TICKET_CATEGORIES, priorities: TICKET_PRIORITIES });
   }
 
+  // ---- DIAGNOSTICO do suporte (saude do service desk) ----
+  // GET /api/app/support/health — verifica conectividade do banco, existencia das
+  // tabelas/colunas e mede a latencia, retornando SEMPRE 200 com um relatorio. Util
+  // para investigar a falha "HTTP 502" em producao sem precisar de logs do servidor.
+  if (head === "health" && method === "GET") {
+    const t0 = Date.now();
+    const checks = {};
+    const ping = await safe(withTimeout(one(sql`SELECT 1 AS ok`), 4000, undefined), undefined);
+    checks.db = ping && ping.ok === 1;
+    const tbl = await safe(withTimeout(one(sql`SELECT
+        to_regclass('public.support_tickets')         IS NOT NULL AS tickets,
+        to_regclass('public.support_ticket_messages') IS NOT NULL AS messages,
+        to_regclass('public.support_ticket_no_seq')   IS NOT NULL AS seq`), 4000, undefined), undefined);
+    checks.table_support_tickets  = !!(tbl && tbl.tickets);
+    checks.table_support_messages = !!(tbl && tbl.messages);
+    checks.seq_ticket_no          = !!(tbl && tbl.seq);
+    const cols = await safe(withTimeout(sql`SELECT column_name FROM information_schema.columns
+        WHERE table_name='support_tickets' AND column_name IN ('origin','client_ref','client_name','client_cnpj')`, 4000, []), []);
+    checks.origin_columns = (cols || []).length === 4;
+    const cnt = await safe(withTimeout(one(sql`SELECT count(*)::int AS n FROM support_tickets WHERE tenant_id=${tenant.id}`), 4000, undefined), undefined);
+    checks.can_read_tickets = cnt !== undefined;
+    const healthy = checks.db && checks.table_support_tickets && checks.table_support_messages && checks.can_read_tickets;
+    return ok({ healthy, checks, my_tickets: cnt ? cnt.n : null,
+      resend_configured: !!process.env.RESEND_API_KEY, support_inbox: !!SUPPORT_INBOX(),
+      waitUntil: !!_bgWaitUntil, elapsed_ms: Date.now() - t0 });
+  }
+
   // Lista dos chamados do proprio tenant. Filtro opcional ?client_ref= para a
   // visao de suporte DENTRO de um cliente especifico (fluxo agrupado por cliente).
   if (!head && method === "GET") {
     const clientRef = new URL(req.url).searchParams.get("client_ref");
-    const rows = await safe(
+    // Leitura com TETO de tempo: a tela de suporte sempre carrega (lista vazia em
+    // ultimo caso) e nunca trava ate o limite do Netlify (HTTP 502).
+    const rows = await safe(withTimeout(
       clientRef
         ? sql`SELECT id, ticket_no, category, subject, priority, status, last_actor,
               attachment_name, origin, client_ref, client_name, client_cnpj, created_at, updated_at,
@@ -1314,7 +1366,7 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
               attachment_name, origin, client_ref, client_name, client_cnpj, created_at, updated_at,
               (SELECT count(*)::int FROM support_ticket_messages m WHERE m.ticket_id=support_tickets.id) AS msg_count
             FROM support_tickets WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 200`,
-      []);
+      8000, []), []);
     return ok({ tickets: rows, categories: TICKET_CATEGORIES });
   }
 
@@ -1342,39 +1394,44 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     // nem bloqueia a resposta — era a causa raiz do HTTP 502 (timeout do Netlify).
     // A INSERT e resiliente a bancos sem as colunas de origem (origin/client_*):
     // tenta com elas e, se faltarem, refaz sem — o chamado sempre e aberto.
-    let t;
-    try {
-      t = await one(sql`INSERT INTO support_tickets
+    // ESCRITA PRINCIPAL com TETO DE TEMPO RIGIDO: mesmo que o banco esteja lento,
+    // a funcao responde rapido (sem ficar pendurada ate o limite do Netlify => 502).
+    // A INSERT e resiliente a bancos sem as colunas de origem (origin/client_*):
+    // tenta com elas e, se faltarem, refaz sem — o chamado sempre e aberto.
+    const INSERT_MS = 8000;
+    let t = await withTimeout(one(sql`INSERT INTO support_tickets
         (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor,
          origin, client_ref, client_name, client_cnpj)
         VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
           'aberto', 'cliente', ${origin}, ${clientRef}, ${clientName}, ${clientCnpj})
-        RETURNING id, ticket_no, status`);
-    } catch (e) {
-      console.error("[support:open] insert c/ colunas de origem falhou — refazendo sem elas:", e?.message || e);
-      t = await one(sql`INSERT INTO support_tickets
+        RETURNING id, ticket_no, status`), INSERT_MS, undefined);
+    if (t === undefined) {
+      // Colunas de origem ausentes (banco nao migrado) OU falha — refaz sem elas.
+      console.error("[support:open] insert c/ colunas de origem falhou/expirou — refazendo sem elas");
+      t = await withTimeout(one(sql`INSERT INTO support_tickets
         (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor)
         VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
           'aberto', 'cliente')
-        RETURNING id, ticket_no, status`);
+        RETURNING id, ticket_no, status`), INSERT_MS, undefined);
     }
-    await sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
-      VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${descDb})`;
-    // Anexo em escrita separada e com teto de tempo (best-effort): se o blob demorar,
-    // a abertura do chamado ja foi concluida e devolvida — nunca vira 502.
+    // Se nem assim gravou, devolve erro CLARO (nunca um 502 sem explicacao).
+    if (!t || !t.id) return fail("Nao foi possivel registrar o chamado agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
+
+    // 1a mensagem da conversa (best-effort, com teto): a descricao ja esta no chamado,
+    // entao mesmo que isto demore/falhe o chamado permanece valido e visivel.
+    await withTimeout(sql`INSERT INTO support_ticket_messages (ticket_id, author_role, author_email, author_name, body)
+      VALUES (${t.id}, 'cliente', ${openerEmail}, ${openerName}, ${descDb})`, 5000, null);
+
+    // Tudo a seguir e EXTRA e roda em SEGUNDO PLANO — a resposta ja pode voltar.
     if (att) {
-      await withTimeout(sql`UPDATE support_tickets SET attachment_name=${att.name},
-        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${t.id}`, 5000, null);
+      runBackground(sql`UPDATE support_tickets SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${t.id}`);
     }
-    // Auditoria com teto de tempo — efeito colateral jamais bloqueia a resposta.
-    await withTimeout(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
-      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority, origin, client: clientName || null } }), 2000, null);
-    // Notifica o suporte (dono). O envio do e-mail e BEST-EFFORT: usamos safe()
-    // para que uma falha/lentidao do provedor (Resend) jamais derrube a abertura
-    // do chamado — o protocolo ja foi gravado e deve ser sempre devolvido.
+    runBackground(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_ticket_opened",
+      entity: "support_ticket", entityId: t.id, detail: { ticketNo: t.ticket_no, category, priority, origin, client: clientName || null } }));
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await withTimeout(sendEmail({ tenantId: tenant.id, to: inbox,
+      runBackground(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] ${ticketCategoryLabel(category)} — ${subject}`,
         type: "support",
         html: `<p><b>Novo chamado #${t.ticket_no}</b> (${escapeHtml(ticketCategoryLabel(category))}, prioridade ${escapeHtml(priority)})</p>
@@ -1384,7 +1441,7 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
           <p><b>Assunto:</b> ${escapeHtml(subject)}</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(description).replace(/\n/g, "<br>")}</blockquote>
           ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)}</p>` : ""}
-          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` }), 2500, null);
+          <p>Abra o <b>Painel → Suporte</b> para responder.</p>` }));
     }
     return ok({ ticketNo: t.ticket_no, id: t.id, status: t.status });
   }
@@ -1440,9 +1497,10 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
 
   // Detalhe + conversa de um chamado do proprio tenant.
   if (head && sseg[1] !== "reply" && method === "GET") {
-    const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
+    const t = await withTimeout(one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`), 8000, undefined);
+    if (t === undefined) return fail("Nao foi possivel abrir o chamado agora. Tente novamente em instantes.", 503, { code: "SUPPORT_READ_FAILED" });
     if (!t) return fail("Chamado nao encontrado.", 404);
-    const messages = await sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`;
+    const messages = await safe(withTimeout(sql`SELECT * FROM support_ticket_messages WHERE ticket_id=${t.id} ORDER BY created_at ASC LIMIT 500`, 8000, []), []);
     return ok({ ticket: { ...t, attachment_data: undefined, has_attachment: !!t.attachment_name }, messages: messages.map(stripMsgAttachment) });
   }
 
@@ -1453,28 +1511,30 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const t = await one(sql`SELECT * FROM support_tickets WHERE id=${head} AND tenant_id=${tenant.id}`);
     if (!t) return fail("Chamado nao encontrado.", 404);
     const att = sanitizeAttachment(b.attachment);
-    // Mensagem gravada sem o blob (RETURNING id); o anexo vai em UPDATE separado com
-    // teto de tempo para que arquivos pesados nunca derrubem a resposta (HTTP 502).
-    const msg = await one(sql`INSERT INTO support_ticket_messages
+    // Mensagem gravada (com teto de tempo) sem o blob (RETURNING id). Se o INSERT
+    // expirar/falhar, devolvemos erro CLARO em vez de pendurar a funcao ate o 502.
+    const msg = await withTimeout(one(sql`INSERT INTO support_ticket_messages
       (ticket_id, author_role, author_email, author_name, body)
       VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)})
-      RETURNING id`);
-    if (att) {
-      await withTimeout(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
-        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`, 5000, null);
-    }
+      RETURNING id`), 8000, undefined);
+    if (!msg || !msg.id) return fail("Nao foi possivel registrar sua mensagem agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
     const newStatus = t.status === "resolvido" || t.status === "fechado" ? "aberto" : t.status;
-    await sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`;
-    await withTimeout(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
-      entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } }), 2000, null);
+    await withTimeout(sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`, 5000, null);
+    // Extras em SEGUNDO PLANO — a resposta volta na hora.
+    if (att) {
+      runBackground(sql`UPDATE support_ticket_messages SET attachment_name=${att.name},
+        attachment_type=${att.type}, attachment_data=${att.data} WHERE id=${msg.id}`);
+    }
+    runBackground(audit({ tenantId: tenant.id, actorEmail: user.email, action: "support_client_reply",
+      entity: "support_ticket", entityId: t.id, detail: { attachment: att?.name || null } }));
     const inbox = SUPPORT_INBOX();
     if (inbox) {
-      await withTimeout(sendEmail({ tenantId: tenant.id, to: inbox,
+      runBackground(sendEmail({ tenantId: tenant.id, to: inbox,
         subject: `[Chamado #${t.ticket_no}] Resposta do cliente — ${t.subject}`,
         type: "support",
         html: `<p>O cliente respondeu no chamado <b>#${t.ticket_no}</b>:</p>
           <blockquote style="border-left:3px solid #d4a017;padding-left:12px;color:#333">${escapeHtml(String(b.body)).replace(/\n/g, "<br>")}</blockquote>
-          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }), 2500, null);
+          ${att ? `<p>📎 Anexo: ${escapeHtml(att.name)} (abra o Painel → Suporte para baixar)</p>` : ""}` }));
     }
     return ok({ ok: true, messageId: msg.id });
   }
