@@ -105,14 +105,16 @@ export default async function handler(req, context) {
 //  PUBLICO / AUTH
 // =====================================================================
 async function listPlans() {
-  const rows = await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features
+  const rows = await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, per_client_cents, features
                          FROM plans WHERE active AND id NOT IN ('owner','custom') ORDER BY tier`,
     await safe(sql`SELECT id, name, tier, client_quota, price_month_cents, price_recurring_cents, features
                          FROM plans WHERE active AND id NOT IN ('owner','custom') ORDER BY tier`, []));
-  // Reserva de preco anual quando a coluna ainda nao migrou: mensal*12*0.85 (15% off).
+  // Reservas quando a coluna ainda nao migrou: anual = mensal*12*0.85 (15% off);
+  // adicional por cliente = R$50,00 (novo modelo: valor fixo + R$50/cliente).
   const plans = (rows || []).map((p) => ({
     ...p,
     price_annual_cents: p.price_annual_cents || Math.round((p.price_month_cents || 0) * 12 * 0.85),
+    per_client_cents: (p.per_client_cents != null ? p.per_client_cents : 5000),
   }));
   return ok({ plans, gateways: billing.availableGateways() });
 }
@@ -914,6 +916,117 @@ function runBackground(promise) {
   if (_bgWaitUntil) { try { _bgWaitUntil(p); } catch (_) { /* runtime sem waitUntil: roda mesmo assim */ } }
   return p;
 }
+
+// =====================================================================
+//  AUTO-CURA DO SCHEMA DE SUPORTE (service desk)
+//  A abertura/resposta de chamados NAO pode depender da migracao de build
+//  (netlify.toml usa `npm run migrate || echo ...`, que pode falhar em silencio
+//  e deixar o banco SEM as tabelas de suporte). Quando isso acontece, o INSERT
+//  lanca erro, o withTimeout engole e o usuario ve "Nao foi possivel registrar
+//  o chamado agora" (503). Para eliminar de vez essa falha, garantimos as tabelas
+//  sob demanda, de forma idempotente, na primeira escrita de cada Lambda quente.
+//  O DDL e 100% "IF NOT EXISTS", entao rodar de novo e barato e seguro.
+// =====================================================================
+let _supportSchemaReady = false;
+async function ensureSupportSchema(force = false) {
+  if (_supportSchemaReady && !force) return true;
+  // Cada statement roda isolado (o driver neon executa 1 comando por chamada).
+  // Falha num statement nao impede os demais — logamos e seguimos.
+  const stmts = [
+    sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`,
+    sql`CREATE SEQUENCE IF NOT EXISTS support_ticket_no_seq START 1001`,
+    sql`CREATE TABLE IF NOT EXISTS support_tickets (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      ticket_no       BIGINT NOT NULL DEFAULT nextval('support_ticket_no_seq'),
+      tenant_id       UUID REFERENCES tenants(id) ON DELETE SET NULL,
+      opener_email    TEXT,
+      opener_name     TEXT,
+      category        TEXT NOT NULL DEFAULT 'outro',
+      subject         TEXT NOT NULL,
+      description     TEXT,
+      priority        TEXT NOT NULL DEFAULT 'normal'
+                      CHECK (priority IN ('baixa','normal','alta','urgente')),
+      status          TEXT NOT NULL DEFAULT 'aberto'
+                      CHECK (status IN ('aberto','em_andamento','aguardando_cliente','resolvido','fechado')),
+      attachment_name TEXT,
+      attachment_type TEXT,
+      attachment_data TEXT,
+      origin          TEXT NOT NULL DEFAULT 'consultoria',
+      client_ref      TEXT,
+      client_name     TEXT,
+      client_cnpj     TEXT,
+      first_response_at TIMESTAMPTZ,
+      resolved_at     TIMESTAMPTZ,
+      last_actor      TEXT,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    sql`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS origin      TEXT NOT NULL DEFAULT 'consultoria'`,
+    sql`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_ref  TEXT`,
+    sql`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_name TEXT`,
+    sql`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS client_cnpj TEXT`,
+    sql`CREATE INDEX IF NOT EXISTS idx_support_tickets_status  ON support_tickets(status)`,
+    sql`CREATE INDEX IF NOT EXISTS idx_support_tickets_tenant  ON support_tickets(tenant_id)`,
+    sql`CREATE INDEX IF NOT EXISTS idx_support_tickets_created ON support_tickets(created_at)`,
+    sql`CREATE INDEX IF NOT EXISTS idx_support_tickets_client  ON support_tickets(client_ref)`,
+    sql`CREATE TABLE IF NOT EXISTS support_ticket_messages (
+      id           BIGSERIAL PRIMARY KEY,
+      ticket_id    UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+      author_role  TEXT NOT NULL DEFAULT 'cliente' CHECK (author_role IN ('cliente','suporte')),
+      author_email TEXT,
+      author_name  TEXT,
+      body         TEXT,
+      attachment_name TEXT,
+      attachment_type TEXT,
+      attachment_data TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    sql`ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT`,
+    sql`ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT`,
+    sql`ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachment_data TEXT`,
+    sql`CREATE INDEX IF NOT EXISTS idx_support_ticket_msgs_ticket ON support_ticket_messages(ticket_id)`,
+  ];
+  let okCount = 0;
+  for (const st of stmts) {
+    try { await st; okCount++; }
+    catch (e) { console.error("[support:ensureSchema]", e?.message || e); }
+  }
+  // Consideramos pronto se as tabelas essenciais existem agora.
+  const chk = await one(sql`SELECT
+      to_regclass('public.support_tickets')         IS NOT NULL AS tickets,
+      to_regclass('public.support_ticket_messages') IS NOT NULL AS messages`).catch(() => null);
+  _supportSchemaReady = !!(chk && chk.tickets && chk.messages);
+  console.log(`[support:ensureSchema] ${okCount}/${stmts.length} statements; ready=${_supportSchemaReady}`);
+  return _supportSchemaReady;
+}
+
+// Executa uma ESCRITA de suporte com auto-cura: tenta; se falhar/expirar, garante
+// o schema (recriando tabelas ausentes) e tenta UMA vez mais, capturando o erro
+// real para o log. Devolve a linha (RETURNING) ou undefined se ainda assim falhar.
+async function supportWrite(makeQuery, ms = 8000) {
+  // 1a tentativa direta (schema provavelmente ja existe).
+  let res = await runSupportQuery(makeQuery, ms);
+  if (res.ok) return res.row;
+  console.error("[support:write] 1a tentativa falhou:", res.error || "timeout", "— auto-curando schema");
+  // Auto-cura + 2a tentativa.
+  await ensureSupportSchema(true);
+  res = await runSupportQuery(makeQuery, ms);
+  if (res.ok) return res.row;
+  console.error("[support:write] 2a tentativa falhou:", res.error || "timeout");
+  return undefined;
+}
+// Roda a query capturando erro/timeout SEM engolir silenciosamente (ao contrario
+// de withTimeout): devolve { ok, row, error, timeout } para diagnostico real.
+function runSupportQuery(makeQuery, ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; resolve({ ok: false, timeout: true }); } }, ms);
+    Promise.resolve()
+      .then(() => makeQuery())
+      .then((row) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: true, row }); } })
+      .catch((e) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: false, error: e?.message || String(e) }); } });
+  });
+}
 async function ownerCrmRoutes(req, user, cseg, method) {
   const head = cseg[0] || "";
 
@@ -1264,10 +1377,11 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     const att = sanitizeAttachment(b.attachment);
     // Mensagem com TETO de tempo (RETURNING id). Se expirar/falhar, erro CLARO em
     // vez de pendurar a funcao ate o limite do Netlify (HTTP 502).
-    const msg = await withTimeout(one(sql`INSERT INTO support_ticket_messages
+    await ensureSupportSchema();
+    const msg = await supportWrite(() => one(sql`INSERT INTO support_ticket_messages
       (ticket_id, author_role, author_email, author_name, body)
       VALUES (${t.id}, 'suporte', ${user.email}, ${user.name || "Suporte"}, ${String(b.body).slice(0, 8000)})
-      RETURNING id`), 8000, undefined);
+      RETURNING id`), 8000);
     if (!msg || !msg.id) return fail("Nao foi possivel registrar a resposta agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
     await withTimeout(sql`UPDATE support_tickets SET status=${newStatus}, last_actor='suporte', updated_at=now(),
       first_response_at=coalesce(first_response_at, now()),
@@ -1301,9 +1415,9 @@ async function ownerSupportRoutes(req, user, sseg, method) {
     if (!t) return fail("Chamado nao encontrado.", 404);
     const status = TICKET_STATUSES.includes(b.status) ? b.status : t.status;
     const priority = TICKET_PRIORITIES.includes(b.priority) ? b.priority : t.priority;
-    const upd = await withTimeout(one(sql`UPDATE support_tickets SET status=${status}, priority=${priority}, updated_at=now(),
+    const upd = await supportWrite(() => one(sql`UPDATE support_tickets SET status=${status}, priority=${priority}, updated_at=now(),
       resolved_at=${status === "resolvido" || status === "fechado" ? new Date().toISOString() : null}
-      WHERE id=${t.id} RETURNING *`), 8000, undefined);
+      WHERE id=${t.id} RETURNING *`), 8000);
     if (!upd || !upd.id) return fail("Nao foi possivel atualizar o chamado agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
     runBackground(audit({ tenantId: t.tenant_id, actorEmail: user.email, action: "support_status_changed",
       entity: "support_ticket", entityId: t.id, detail: { status, priority } }));
@@ -1339,6 +1453,15 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     checks.table_support_tickets  = !!(tbl && tbl.tickets);
     checks.table_support_messages = !!(tbl && tbl.messages);
     checks.seq_ticket_no          = !!(tbl && tbl.seq);
+    // AUTO-CURA: se faltar qualquer tabela essencial, cria sob demanda e reavalia.
+    if (!checks.table_support_tickets || !checks.table_support_messages) {
+      checks.healed = await safe(ensureSupportSchema(true), false);
+      const tbl2 = await safe(withTimeout(one(sql`SELECT
+          to_regclass('public.support_tickets')         IS NOT NULL AS tickets,
+          to_regclass('public.support_ticket_messages') IS NOT NULL AS messages`), 4000, undefined), undefined);
+      checks.table_support_tickets  = !!(tbl2 && tbl2.tickets);
+      checks.table_support_messages = !!(tbl2 && tbl2.messages);
+    }
     const cols = await safe(withTimeout(sql`SELECT column_name FROM information_schema.columns
         WHERE table_name='support_tickets' AND column_name IN ('origin','client_ref','client_name','client_cnpj')`, 4000, []), []);
     checks.origin_columns = (cols || []).length === 4;
@@ -1398,21 +1521,25 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     // a funcao responde rapido (sem ficar pendurada ate o limite do Netlify => 502).
     // A INSERT e resiliente a bancos sem as colunas de origem (origin/client_*):
     // tenta com elas e, se faltarem, refaz sem — o chamado sempre e aberto.
+    // Garante o schema de suporte ANTES da escrita (auto-cura se a migracao de
+    // build falhou em silencio). Barato quando ja existe (cache por Lambda quente).
+    await ensureSupportSchema();
     const INSERT_MS = 8000;
-    let t = await withTimeout(one(sql`INSERT INTO support_tickets
+    // Escrita PRINCIPAL com auto-cura: se falhar, recria tabelas ausentes e refaz.
+    let t = await supportWrite(() => one(sql`INSERT INTO support_tickets
         (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor,
          origin, client_ref, client_name, client_cnpj)
         VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
           'aberto', 'cliente', ${origin}, ${clientRef}, ${clientName}, ${clientCnpj})
-        RETURNING id, ticket_no, status`), INSERT_MS, undefined);
-    if (t === undefined) {
-      // Colunas de origem ausentes (banco nao migrado) OU falha — refaz sem elas.
-      console.error("[support:open] insert c/ colunas de origem falhou/expirou — refazendo sem elas");
-      t = await withTimeout(one(sql`INSERT INTO support_tickets
+        RETURNING id, ticket_no, status`), INSERT_MS);
+    if (!t || !t.id) {
+      // Ultimo recurso: banco antigo sem colunas de origem — grava sem elas.
+      console.error("[support:open] insert c/ colunas de origem falhou — refazendo sem elas");
+      t = await supportWrite(() => one(sql`INSERT INTO support_tickets
         (tenant_id, opener_email, opener_name, category, subject, description, priority, status, last_actor)
         VALUES (${tenant.id}, ${openerEmail}, ${openerName}, ${category}, ${subject}, ${descDb}, ${priority},
           'aberto', 'cliente')
-        RETURNING id, ticket_no, status`), INSERT_MS, undefined);
+        RETURNING id, ticket_no, status`), INSERT_MS);
     }
     // Se nem assim gravou, devolve erro CLARO (nunca um 502 sem explicacao).
     if (!t || !t.id) return fail("Nao foi possivel registrar o chamado agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
@@ -1513,10 +1640,11 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const att = sanitizeAttachment(b.attachment);
     // Mensagem gravada (com teto de tempo) sem o blob (RETURNING id). Se o INSERT
     // expirar/falhar, devolvemos erro CLARO em vez de pendurar a funcao ate o 502.
-    const msg = await withTimeout(one(sql`INSERT INTO support_ticket_messages
+    await ensureSupportSchema();
+    const msg = await supportWrite(() => one(sql`INSERT INTO support_ticket_messages
       (ticket_id, author_role, author_email, author_name, body)
       VALUES (${t.id}, 'cliente', ${t.opener_email}, ${t.opener_name}, ${String(b.body).slice(0, 8000)})
-      RETURNING id`), 8000, undefined);
+      RETURNING id`), 8000);
     if (!msg || !msg.id) return fail("Nao foi possivel registrar sua mensagem agora. Tente novamente em instantes.", 503, { code: "SUPPORT_WRITE_FAILED" });
     const newStatus = t.status === "resolvido" || t.status === "fechado" ? "aberto" : t.status;
     await withTimeout(sql`UPDATE support_tickets SET last_actor='cliente', status=${newStatus}, resolved_at=NULL, updated_at=now() WHERE id=${t.id}`, 5000, null);

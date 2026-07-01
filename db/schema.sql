@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS plans (
 -- Preco ANUAL (centavos): compra de 12 meses com desconto (padrao ~15% off).
 -- Quando 0/NULL, o backend calcula price_month_cents*12*0.85 como reserva.
 ALTER TABLE plans ADD COLUMN IF NOT EXISTS price_annual_cents INT NOT NULL DEFAULT 0;
+-- Adicional por cliente gerenciado (centavos). Novo modelo de cobranca: cada plano
+-- tem um valor FIXO mensal + este adicional por cliente na carteira (padrao R$50,00).
+ALTER TABLE plans ADD COLUMN IF NOT EXISTS per_client_cents INT NOT NULL DEFAULT 5000;
 
 -- =====================================================================
 --  2) TENANTS (assinantes: consultores/empresas). O dono tambem e um tenant.
@@ -320,21 +323,24 @@ CREATE TABLE IF NOT EXISTS document_versions (
 -- =====================================================================
 --  SEEDS
 -- =====================================================================
--- Planos (preco recorrente = mensal * 0.95, conforme regra de 5% off)
--- price_annual_cents = mensal * 12 * 0.85 (15% de desconto na compra anual).
-INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, features) VALUES
- ('basic', 'Basico',         1, 25,  35000, 33250, 357000,
-   '["Gestao de ate 25 clientes","Solicitacoes de titulares (art. 18 LGPD)","Registro e tratativa de incidentes","Documentos versionados (LGPD/GDPR)","Selo de compliance & paginas publicas","Bilingue PT/EN · desktop e mobile","Suporte por e-mail"]'),
- ('inter', 'Intermediario',  2, 50, 50000, 47500, 510000,
-   '["Tudo do modulo Basico","Gestao de ate 50 clientes","Projetos e fases com Gantt","Tarefas por fase do projeto","Treinamentos & certificados verificaveis","Alerta de cronograma (prazos de adequacao)","Suporte prioritario"]'),
- ('adv',   'Avancado',       3, 100, 80000, 76000, 816000,
-   '["Tudo do modulo Intermediario","Gestao de ate 100 clientes","Equipe com acesso por cliente (menor privilegio)","Marca da consultoria nos relatorios","Suporte dedicado & onboarding assistido"]'),
- ('owner', 'Dono da Plataforma', 99, NULL, 0, 0, 0,
+-- Planos — NOVO MODELO DE COBRANCA (alinhado ao site /#modulos):
+--   valor FIXO mensal + R$50,00 (per_client_cents) por cliente gerenciado.
+--   Basico R$150/mes (ate 25), Intermediario R$250/mes (ate 50), Avancado R$350/mes (ate 100).
+--   price_recurring = fixo * 0.95 (5% off). price_annual = fixo * 12 * 0.85 (15% off no valor fixo).
+INSERT INTO plans (id, name, tier, client_quota, price_month_cents, price_recurring_cents, price_annual_cents, per_client_cents, features) VALUES
+ ('basic', 'Basico',         1, 25,  15000, 14250, 153000, 5000,
+   '["Valor fixo R$150/mes + R$50 por cliente","Gestao de ate 25 clientes","Solicitacoes de titulares (art. 18 LGPD)","Registro e tratativa de incidentes","Documentos versionados (LGPD/GDPR)","Selo de compliance & paginas publicas","Bilingue PT/EN · desktop e mobile","Suporte por e-mail"]'),
+ ('inter', 'Intermediario',  2, 50,  25000, 23750, 255000, 5000,
+   '["Valor fixo R$250/mes + R$50 por cliente","Tudo do modulo Basico","Gestao de ate 50 clientes","Projetos e fases com Gantt","Tarefas por fase do projeto","Treinamentos & certificados verificaveis","Alerta de cronograma (prazos de adequacao)","Suporte prioritario"]'),
+ ('adv',   'Avancado',       3, 100, 35000, 33250, 357000, 5000,
+   '["Valor fixo R$350/mes + R$50 por cliente","Tudo do modulo Intermediario","Gestao de ate 100 clientes","Equipe com acesso por cliente (menor privilegio)","Marca da consultoria nos relatorios","Suporte dedicado & onboarding assistido"]'),
+ ('owner', 'Dono da Plataforma', 99, NULL, 0, 0, 0, 0,
    '["Ambiente administrativo","Cadastro ilimitado de clientes para consultoria","Gestao de licencas e tenants","Auditoria global"]')
 ON CONFLICT (id) DO UPDATE SET
   name=EXCLUDED.name, tier=EXCLUDED.tier, client_quota=EXCLUDED.client_quota,
   price_month_cents=EXCLUDED.price_month_cents, price_recurring_cents=EXCLUDED.price_recurring_cents,
-  price_annual_cents=EXCLUDED.price_annual_cents, features=EXCLUDED.features;
+  price_annual_cents=EXCLUDED.price_annual_cents, per_client_cents=EXCLUDED.per_client_cents,
+  features=EXCLUDED.features;
 
 -- Plano "Personalizado" (somente para licencas avulsas emitidas pelo dono):
 -- active=FALSE para NAO aparecer no checkout publico; o dono escolhe a quantidade de

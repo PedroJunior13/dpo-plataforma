@@ -290,15 +290,20 @@
   }
   // Preço de referência por módulo — garante valores corretos no seletor mesmo que
   // o banco ainda não tenha aplicado a migração de preços (evita "R$ 0,00/mês").
-  const FALLBACK_PRICE = { basic: 35000, inter: 50000, adv: 80000 };
+  // Novo modelo de cobrança: valor FIXO mensal + R$50/cliente. Fallbacks garantem
+  // valores corretos no seletor mesmo antes da migração de preços (evita "R$ 0,00").
+  const FALLBACK_PRICE = { basic: 15000, inter: 25000, adv: 35000 };
+  const FALLBACK_PERCLIENT = 5000;
   async function openEmitir() {
     await ensurePlans();
     $("#e_plan").innerHTML = PLANS.map((p) => {
       // Plano "Personalizado": o dono define clientes e valor nos campos próprios.
       if (p.id === "custom") return `<option value="custom">Personalizado — definir clientes e valor</option>`;
-      const q = p.client_quota == null ? "ilimitado" : p.client_quota + " clientes";
+      const q = p.client_quota == null ? "ilimitado" : "até " + p.client_quota + " clientes";
       const cents = p.price_month_cents || FALLBACK_PRICE[p.id] || 0;
-      return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(cents)}/mês</option>`;
+      const per = p.per_client_cents != null ? p.per_client_cents : FALLBACK_PERCLIENT;
+      const perTxt = per ? " + " + brl(per) + "/cliente" : "";
+      return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(cents)}/mês${perTxt}</option>`;
     }).join("");
     ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
     if ($("#e_validdays")) $("#e_validdays").value = "";

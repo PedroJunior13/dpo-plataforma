@@ -4,6 +4,7 @@ import { audit } from "./audit.js";
 import { licenseEvent } from "./audit.js";
 import { sendEmail } from "./notify.js";
 import * as nfse from "./nfse.js";
+import { issueLicense, activationLink } from "./licenses.js";
 
 // Estende a janela paga conforme o CICLO (1 mes ou 1 ano) a partir de agora
 // (ou do fim atual). Se houver dia de vencimento escolhido (1-28), ajusta a data.
@@ -35,10 +36,36 @@ export async function onPaymentApproved({ tenantId, gateway, gatewayPaymentId, a
   await sql`UPDATE tenants SET status='active', updated_at=now() WHERE id=${tenantId}`;
 
   // Ativa/renova licenca do tenant; estende validade do avulso.
-  const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
+  let lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
   if (lic) {
     await sql`UPDATE licenses SET status='active', valid_until=${periodEnd}, version=version+1, updated_at=now() WHERE id=${lic.id}`;
     await licenseEvent({ licenseId: lic.id, tenantId, event: "renewed", actorEmail: "system", after: { valid_until: periodEnd }, note: `Pagamento aprovado via ${gateway}.` });
+  } else {
+    // RECONHECIMENTO DO MODULO ESCOLHIDO NA COMPRA: uma compra nova pelo site cria
+    // tenant + assinatura (com o plano escolhido) mas ainda SEM licenca. Ao confirmar
+    // o pagamento, emitimos a licenca automaticamente para o MODULO contratado
+    // (tenant.plan_id vem do checkout) e enviamos o link de ativacao ao cliente.
+    try {
+      const issued = await issueLicense({
+        tenantId, tenant, planId: tenant.plan_id || sub?.plan_id || "basic",
+        billingType: sub?.billing_type || "monthly",
+        billingCycle: sub?.billing_cycle || "monthly",
+        subscriptionId: sub?.id || null,
+        validUntil: periodEnd, dueDay: sub?.due_day || null,
+        actor: { email: "system", name: "Pagamento aprovado" },
+      });
+      lic = issued.license;
+      await licenseEvent({ licenseId: lic.id, tenantId, event: "issued", actorEmail: "system",
+        after: { plan_id: lic.plan_id, valid_until: periodEnd }, note: `Licenca emitida automaticamente apos pagamento (${gateway}). Modulo: ${lic.plan_id}.` });
+      // Envia o link de ativacao do modulo contratado.
+      if (tenant.email) {
+        await sendEmail({ tenantId, to: tenant.email, type: "license_issued",
+          subject: `Sua licenca ${issued.plan?.name || ""} esta pronta — DPO PJ Protection`,
+          html: `<p>Pagamento confirmado! Ative seu modulo <b>${issued.plan?.name || tenant.plan_id}</b> pelo link abaixo:</p>
+            <p><a href="${activationLink(lic)}">${activationLink(lic)}</a></p>
+            <p>Este link e pessoal e libera o seu modulo na primeira vez.</p>` });
+      }
+    } catch (e) { console.error("[webhook] falha ao emitir licenca automatica:", e?.message || e); }
   }
   await audit({ tenantId, actorEmail: "system", action: "payment_approved", entity: "payment", entityId: pay.id, detail: { gateway, amountCents } });
 

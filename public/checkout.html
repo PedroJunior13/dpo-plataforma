@@ -170,9 +170,12 @@
       $("#plans").innerHTML = PLANS.map((p) => {
         const feats = Array.isArray(p.features) ? p.features : (p.features?.items || p.features?.list || []);
         const q = p.client_quota == null ? "Clientes ilimitados" : "Até " + p.client_quota + " clientes";
+        const per = p.per_client_cents != null ? p.per_client_cents : 5000;
+        const perLine = per ? `<div class="small" style="color:var(--gold2);font-weight:700">+ ${brl(per)} por cliente gerenciado</div>` : "";
         return `<div class="card plan" data-id="${esc(p.id)}">
           <h3>${esc(p.name)}</h3>
           <div class="price">${brl(p.price_month_cents)}<span class="small muted" style="font-weight:400">/mês</span></div>
+          ${perLine}
           <div class="small muted">Recorrente: ${brl(p.price_recurring_cents)}/mês · Anual: ${brl(annualCents(p))}/ano</div>
           <ul><li>${q}</li>${feats.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
         </div>`;
