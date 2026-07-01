@@ -16,7 +16,7 @@ import * as L from "./lib/licenses.js";
 import * as billing from "./lib/billing.js";
 import * as nfse from "./lib/nfse.js";
 import { allSettings, setSettings } from "./lib/settings.js";
-import { sendEmail, sendWhatsApp, waLink } from "./lib/notify.js";
+import { sendEmail, sendWhatsApp, waLink, emailConfig } from "./lib/notify.js";
 import { generateSecret, verifyTotp, keyuri } from "./lib/totp.js";
 import { assertFeature, capabilities, hasFeature } from "./lib/plan-features.js";
 import { resetDemo, demoStatus, userFromDemoToken } from "./lib/demo.js";
@@ -549,11 +549,15 @@ async function ownerRoutes(req, user, seg, method) {
     const rows = await safe(sql`
       SELECT l.*, t.name AS tenant_name, t.email AS tenant_email, t.phone AS tenant_phone,
              t.status AS tenant_status, t.client_quota_override, p.name AS plan_name, p.tier AS plan_tier,
+             p.per_client_cents, p.price_month_cents, p.price_recurring_cents, p.price_annual_cents,
+             p.client_quota AS plan_client_quota,
+             s.billing_type AS sub_billing_type, s.billing_cycle AS sub_billing_cycle,
              (SELECT count(*)::int FROM clients c WHERE c.tenant_id=t.id) AS clients_count
       FROM licenses l JOIN tenants t ON t.id=l.tenant_id LEFT JOIN plans p ON p.id=l.plan_id
+      LEFT JOIN LATERAL (SELECT billing_type, billing_cycle FROM subscriptions WHERE tenant_id=t.id ORDER BY created_at DESC LIMIT 1) s ON TRUE
       ORDER BY l.created_at DESC LIMIT 300`, []);
     const plans = await safe(sql`SELECT id,name,tier,client_quota FROM plans WHERE id<>'owner' ORDER BY tier`, []);
-    return ok({ licenses: rows.map(decorate), plans });
+    return ok({ licenses: rows.map(decorateWithBilling), plans });
   }
   if (r === "licenses" && method === "POST") {
     const b = await readJson(req);
@@ -633,6 +637,69 @@ async function ownerRoutes(req, user, seg, method) {
     return ok({ deleted: true });
   }
 
+  // EMITIR BOLETO/PIX SOB DEMANDA para QUALQUER licenca (ativa, suspensa, inativa,
+  // vencida). Cobra a fatura do mes = base do modulo + adicionais por cliente. Ao
+  // pagar, o webhook reativa o tenant/licenca automaticamente (onPaymentApproved).
+  if (seg[1] === "licenses" && seg[2] && seg[3] === "boleto" && method === "POST") {
+    const b = await readJson(req).catch(() => ({}));
+    const lic = await one(sql`SELECT * FROM licenses WHERE id=${seg[2]}`);
+    if (!lic) return fail("Licenca nao encontrada.", 404);
+    const tenant = await one(sql`SELECT * FROM tenants WHERE id=${lic.tenant_id}`);
+    if (!tenant) return fail("Cliente nao encontrado.", 404);
+    if (!tenant.email) return fail("O cliente nao tem e-mail cadastrado — necessario para gerar a cobranca.", 400);
+    const plan = await one(sql`SELECT * FROM plans WHERE id=${lic.plan_id}`);
+    const bill = await L.computeBilling(tenant.id);
+    const brlServer = (c) => "R$ " + (Number(c || 0) / 100).toFixed(2).replace(".", ",");
+    const cycle = b.cycle === "annual" ? "annual" : "monthly";
+    const payMethod = ["pix", "boleto"].includes(b.method) ? b.method : "boleto";
+    // Valor: override explicito do dono (em reais) tem prioridade; senao usa a fatura.
+    const overrideReais = parseFloat(String(b.amountReais ?? "").replace(",", "."));
+    let amount;
+    if (Number.isFinite(overrideReais) && overrideReais > 0) amount = Math.round(overrideReais * 100);
+    else amount = cycle === "annual" ? bill.totalAnnualCents : bill.totalMonthlyCents;
+    if (!(amount > 0)) return fail("O valor da cobranca ficou zerado (licenca de cortesia?). Informe um valor manual para emitir o boleto.", 400);
+
+    // Escolhe um gateway que suporte boleto/pix (Mercado Pago ou Pagar.me). Stripe
+    // (so cartao) fica por ultimo. Sem gateway configurado, cai em modo manual.
+    const gws = billing.availableGateways();
+    const preferred = ["mercadopago", "pagarme", "stripe"].find((g) => gws.includes(g)) || null;
+
+    // Garante uma assinatura para trilhar o periodo e reconciliar o webhook.
+    let sub = await one(sql`SELECT * FROM subscriptions WHERE tenant_id=${tenant.id} ORDER BY created_at DESC LIMIT 1`);
+    if (!sub) {
+      sub = await one(sql`INSERT INTO subscriptions (tenant_id, plan_id, billing_type, billing_cycle, amount_cents, status)
+        VALUES (${tenant.id}, ${lic.plan_id}, 'monthly', ${cycle}, ${amount}, 'pending') RETURNING *`).catch(() => null);
+    }
+
+    let charge = null, manual = false;
+    if (preferred) {
+      try {
+        charge = await billing.createCharge({ gateway: preferred, billingType: "monthly", billingCycle: cycle, method: payMethod, tenant, plan: plan || { name: bill.planName }, amountCents: amount });
+      } catch (e) { manual = true; charge = { gateway: "manual", checkoutUrl: null, gatewayRef: null }; }
+    } else { manual = true; charge = { gateway: "manual", checkoutUrl: null, gatewayRef: null }; }
+
+    // Registra o pagamento pendente (aparece no painel e reconcilia no webhook).
+    await safe(sql`INSERT INTO payments (tenant_id, subscription_id, gateway, gateway_payment_id, method, amount_cents, status)
+      VALUES (${tenant.id}, ${sub?.id || null}, ${charge.gateway}, ${charge.gatewayRef || charge.gatewaySubscriptionId || null}, ${payMethod}, ${amount}, 'pending')`, null);
+    await safe(audit({ tenantId: tenant.id, actorEmail: user.email, action: "boleto_issued", entity: "license", entityId: lic.id,
+      detail: { amountCents: amount, cycle, method: payMethod, gateway: charge.gateway, manual, extraClients: bill.extraClients, overageCents: bill.overageCents }, ip: clientIp(req) }), null);
+
+    // Envia a cobranca ao cliente por e-mail (se o link existir e o e-mail estiver ativo).
+    if (charge.checkoutUrl && tenant.email) {
+      await safe(sendEmail({ tenantId: tenant.id, to: tenant.email, type: "charge",
+        subject: `Cobranca ${payMethod === "pix" ? "PIX" : "boleto"} — DPO PJ Protection`,
+        html: `<p>Olá ${escapeHtml(tenant.name || "")},</p><p>Segue sua cobrança de <b>${brlServer(amount)}</b> (${cycle === "annual" ? "anual" : "mensal"})${bill.extraClients ? ` — inclui ${bill.extraClients} cliente(s) adicional(is)` : ""}.</p><p><a href="${charge.checkoutUrl}">Pagar agora</a></p><p>Assim que o pagamento for confirmado, o acesso é reativado automaticamente.</p>` }), null);
+    }
+
+    return ok({
+      manual, gateway: charge.gateway, checkoutUrl: charge.checkoutUrl,
+      amountCents: amount, cycle, method: payMethod, bill,
+      message: manual
+        ? "Nenhum gateway de pagamento está configurado. A cobrança foi registrada como pendente — combine o pagamento manualmente ou configure um gateway."
+        : `Cobrança de ${brlServer(amount)} gerada. Link enviado ao cliente${charge.checkoutUrl ? "" : " (verifique o painel do gateway)"}.`,
+    });
+  }
+
   // Ativar / Inativar cliente (inadimplencia ou desativacao manual).
   if (seg[1] === "tenants" && seg[2] && seg[3] === "active" && method === "POST") {
     const b = await readJson(req);
@@ -701,7 +768,47 @@ async function ownerRoutes(req, user, seg, method) {
   // ---- INTEGRACOES (configuracao da NFS-e e demais parametros) ----
   // GET: estado atual (token mascarado) + diagnostico do que falta.
   if (r === "integrations" && method === "GET") {
-    return ok({ nfse: await nfse.status() });
+    const ecfg = await emailConfig();
+    return ok({
+      nfse: await nfse.status(),
+      email: {
+        configured: ecfg.configured,
+        // Nunca devolvemos a chave; so um mascarado indicando que existe.
+        keyMasked: ecfg.configured ? "••••••••" + String(ecfg.key).slice(-4) : "",
+        fromName: ecfg.fromName,
+        fromEmail: ecfg.fromEmail,
+        inbox: SUPPORT_INBOX(),
+      },
+    });
+  }
+  // POST: salva a config do e-mail transacional (Resend) — precedencia sobre env.
+  // A chave so e sobrescrita quando enviada nao-vazia (evita apagar por engano).
+  if (seg[1] === "integrations" && seg[2] === "email" && seg[3] == null && method === "POST") {
+    const b = await readJson(req).catch(() => ({}));
+    const patch = {};
+    if (typeof b.fromName === "string") patch.NOTIFY_FROM_NAME = b.fromName.trim();
+    if (typeof b.fromEmail === "string") patch.NOTIFY_FROM_EMAIL = b.fromEmail.trim();
+    if (typeof b.apiKey === "string") {
+      const k = b.apiKey.trim();
+      if (k && !/^[•*]/.test(k)) patch.RESEND_API_KEY = k; // ignora valor mascarado
+      else if (b.clearKey === true) patch.RESEND_API_KEY = "";
+    }
+    await setSettings(patch, user.email);
+    await audit({ actorEmail: user.email, action: "integrations_email_updated", entity: "settings",
+      detail: { keys: Object.keys(patch) }, ip: clientIp(req) });
+    const ecfg = await emailConfig();
+    return ok({ email: { configured: ecfg.configured, keyMasked: ecfg.configured ? "••••••••" + String(ecfg.key).slice(-4) : "", fromName: ecfg.fromName, fromEmail: ecfg.fromEmail, inbox: SUPPORT_INBOX() } });
+  }
+  // POST .../test: envia um e-mail de teste para a caixa de suporte do Dono.
+  if (seg[1] === "integrations" && seg[2] === "email" && seg[3] === "test" && method === "POST") {
+    const ecfg = await emailConfig();
+    if (!ecfg.configured) return fail("Informe a chave da API do Resend para ativar os envios.", 400);
+    const to = SUPPORT_INBOX();
+    const res = await sendEmail({ to, type: "test",
+      subject: "Teste de e-mail — DPO PJ Protection",
+      html: `<p>Este é um e-mail de teste da plataforma <b>DPO PJ Protection</b>.</p><p>Se você recebeu esta mensagem, o envio transacional está funcionando corretamente.</p>` });
+    if (res.status === "sent") return ok({ sent: true, to, message: `E-mail de teste enviado para ${to}. Confira a caixa de entrada.` });
+    return fail(`Falha ao enviar (${res.status}). ${res.err ? "Detalhe: " + String(res.err).slice(0, 200) : "Verifique a chave e o domínio verificado no Resend."}`, 400);
   }
   // POST: salva os parametros de emissao da NFS-e (precedencia sobre env).
   // O token so e sobrescrito quando enviado nao-vazio (evita apagar por engano).
@@ -861,6 +968,16 @@ async function ownerRoutes(req, user, seg, method) {
 }
 
 function decorate(lic) { return { ...lic, activation_link: L.activationLink(lic) }; }
+// Igual ao decorate, porem calcula a FATURA (base + adicionais por cliente) a
+// partir dos campos ja trazidos na query (sem N+1). Transparencia no painel.
+function decorateWithBilling(row) {
+  const tenant = { id: row.tenant_id, client_quota_override: row.client_quota_override, plan_id: row.plan_id };
+  const lic = { plan_id: row.plan_id, client_quota: row.client_quota, pricing: row.pricing, custom_price_cents: row.custom_price_cents, billing_type: row.sub_billing_type, billing_cycle: row.billing_cycle };
+  const sub = { billing_type: row.sub_billing_type, billing_cycle: row.sub_billing_cycle };
+  const plan = { name: row.plan_name, client_quota: row.plan_client_quota, per_client_cents: row.per_client_cents, price_month_cents: row.price_month_cents, price_recurring_cents: row.price_recurring_cents, price_annual_cents: row.price_annual_cents };
+  const billing = L.billingFrom({ tenant, lic, sub, plan, planId: row.plan_id, clients: row.clients_count || 0 });
+  return { ...decorate(row), billing };
+}
 
 // E-mail HTML com a licenca + credenciais/instrucoes de primeiro acesso.
 // Enviado automaticamente ao comprador quando o dono emite a licenca pela aba Compras.
@@ -1481,8 +1598,9 @@ async function appSupportRoutes(req, user, tenant, sseg, method) {
     const cnt = await safe(withTimeout(one(sql`SELECT count(*)::int AS n FROM support_tickets WHERE tenant_id=${tenant.id}`), 4000, undefined), undefined);
     checks.can_read_tickets = cnt !== undefined;
     const healthy = checks.db && checks.table_support_tickets && checks.table_support_messages && checks.can_read_tickets;
+    const ecfgH = await safe(emailConfig(), { configured: false });
     return ok({ healthy, checks, my_tickets: cnt ? cnt.n : null,
-      resend_configured: !!process.env.RESEND_API_KEY, support_inbox: !!SUPPORT_INBOX(),
+      resend_configured: ecfgH.configured, support_inbox: !!SUPPORT_INBOX(),
       waitUntil: !!_bgWaitUntil, elapsed_ms: Date.now() - t0 });
   }
 
@@ -1715,6 +1833,25 @@ async function ownerDashboard() {
     FROM tenants t LEFT JOIN plans p ON p.id=t.plan_id
     LEFT JOIN LATERAL (SELECT amount_cents, status FROM subscriptions s WHERE s.tenant_id=t.id ORDER BY created_at DESC LIMIT 1) sub ON TRUE
     WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`, []);
+  // Receita de clientes adicionais (overage): para cada consultoria com licenca
+  // paga e ativa, soma (clientes acima da cota) x per_client_cents. Transparente
+  // para o dono: quanto a mais entra por clientes cadastrados alem da cota do modulo.
+  const overage = await safe(one(sql`
+    WITH lic AS (
+      SELECT DISTINCT ON (l.tenant_id) l.tenant_id, l.plan_id, l.client_quota, l.pricing
+      FROM licenses l WHERE l.status='active' ORDER BY l.tenant_id, l.created_at DESC
+    )
+    SELECT
+      coalesce(sum(GREATEST(0, cc.n - COALESCE(t.client_quota_override, lic.client_quota, p.client_quota, 0))
+        * COALESCE(p.per_client_cents, 5000)),0)::int AS cents,
+      coalesce(sum(GREATEST(0, cc.n - COALESCE(t.client_quota_override, lic.client_quota, p.client_quota, 0))),0)::int AS extra_clients
+    FROM lic
+    JOIN tenants t ON t.id=lic.tenant_id
+    LEFT JOIN plans p ON p.id=lic.plan_id
+    JOIN LATERAL (SELECT count(*)::int AS n FROM clients c WHERE c.tenant_id=lic.tenant_id) cc ON TRUE
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE AND COALESCE(lic.pricing,'paid')<>'free'
+      AND COALESCE(t.client_quota_override, lic.client_quota, p.client_quota) IS NOT NULL`),
+    { cents: 0, extra_clients: 0 });
   // Status das licencas (para grafico de rosca/barras em CSS).
   const licStatus = await safe(sql`SELECT status, count(*)::int AS n FROM licenses GROUP BY status`, []);
   // Funil do CRM (resumo).
@@ -1734,16 +1871,16 @@ async function ownerDashboard() {
   // Status do e-mail transacional (Resend). Sem chave configurada, a plataforma
   // NAO envia e-mails (ativacao, cobranca, avisos de chamado). O painel mostra
   // um aviso para o dono saber na hora.
-  const emailConfigured = !!process.env.RESEND_API_KEY;
+  const ecfg = await safe(emailConfig(), { configured: false, fromEmail: "contato@dpopjprotection.com.br" });
   return ok({
-    totals, mrrCents: mrr.cents, overdue, byPlan,
+    totals, mrrCents: mrr.cents, overageCents: overage.cents, overageClients: overage.extra_clients, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
     nfseEnabled: nfseStatus.enabled, nfseAuto: nfseStatus.auto, nfseMissing, nfseStatus,
     gateways: billing.availableGateways(),
     email: {
-      configured: emailConfigured,
+      configured: ecfg.configured,
       inbox: SUPPORT_INBOX(),
-      from: process.env.NOTIFY_FROM_EMAIL || "contato@dpopjprotection.com.br",
+      from: ecfg.fromEmail || "contato@dpopjprotection.com.br",
     },
   });
 }

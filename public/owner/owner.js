@@ -104,7 +104,8 @@
     // --- Integrações ---
     sec_integrations: { t: "Integrações", b: "Conexões externas da plataforma: emissão de NFS-e (Focus NFe), gateways de pagamento e canais de aviso (e-mail/WhatsApp). Os parâmetros salvos aqui têm precedência sobre as variáveis de ambiente — você ajusta tudo pelo painel, sem mexer no servidor." },
     integ_nfse: { t: "NFS-e (Focus NFe)", b: "Emissão automática da nota fiscal de serviço a cada pagamento aprovado, via Focus NFe (que abstrai o padrão de cada prefeitura). Obrigatórios: token, CNPJ do emitente, Inscrição Municipal e Código do Município (IBGE). Use o ambiente de Homologação para testar antes de ligar a Produção.", b2: "Dica: o item da lista de serviço 1.07 e a alíquota de ISS 2% são os padrões para licenciamento/suporte em TI no Simples Nacional — confirme com a sua contabilidade." },
-    integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (e-mail via Resend, WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto." },
+    integ_email: { t: "E-mail transacional (Resend)", b: "Ativa o envio automático de e-mails da plataforma: link de ativação de licença para o cliente, avisos de vencimento/cobrança e notificações de chamados de suporte. Sem isso, nada é enviado por e-mail (você só vê os links no painel).", b2: "Como ativar: crie uma conta grátis em resend.com, adicione e verifique o domínio dpopjprotection.com.br (registros DNS SPF/DKIM), gere uma API Key e cole aqui. Use 'Enviar e-mail de teste' para confirmar. A chave salva aqui tem precedência sobre a variável de ambiente do servidor." },
+    integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto. O e-mail transacional tem card próprio acima." },
   };
   function openInfo(key) {
     const i = INFO[key]; if (!i) return;
@@ -170,7 +171,8 @@
         kpi(t.pending_purchases, "Compras a liberar", t.pending_purchases ? "gold" : "", "gerar licença", "purchases"),
         kpi(t.active_licenses, "Licenças ativas", "green", `${t.pending_activation || 0} a ativar`, "licenses"),
         kpi(t.clients_managed, "Clientes na operação", "", "todos os assinantes", ""),
-        kpi(brl(d.mrrCents), "Receita recorrente", "gold", "MRR ativo", "payments"),
+        kpi(brl((d.mrrCents || 0) + (d.overageCents || 0)), "Receita recorrente", "gold", `MRR + adicionais`, "payments"),
+        kpi(brl(d.overageCents), "Clientes adicionais", d.overageCents ? "gold" : "", `${d.overageClients || 0} além da cota × R$50`, "licenses"),
       ].join("");
 
       // Gráfico de receita (CSS bars)
@@ -223,7 +225,7 @@
       const em = d.email || {};
       const emailLine = em.configured
         ? `<span class="tag active">configurado</span> <span class="small muted">envia de ${esc(em.from || "")}</span>`
-        : `<span class="tag pending">não configurado</span><div class="small muted" style="margin-top:4px">Defina <b>RESEND_API_KEY</b> nas variáveis do Netlify para enviar e-mails.</div>`;
+        : `<span class="tag pending">não configurado</span><div class="small muted" style="margin-top:4px">Configure em <b>Integrações → E-mail</b> para ativar os envios.</div>`;
       $("#integ").innerHTML =
         `<div>Pagamento: ${gws.length ? gws.map((g) => `<span class="tag active" style="text-transform:capitalize">${esc(g)}</span>`).join(" ") : '<span class="tag grace">manual (sem gateway)</span>'}</div>` +
         `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>` +
@@ -241,10 +243,11 @@
                 <span style="font-size:22px;line-height:1">⚠️</span>
                 <div>
                   <b style="color:#f0b232">E-mail transacional não configurado</b>
-                  <p class="small muted" style="margin:4px 0 0">
+                  <p class="small muted" style="margin:4px 0 6px">
                     A plataforma <b>não está enviando e-mails</b> (link de ativação de licença, avisos de cobrança e notificações de chamados${em.inbox ? ` para <b>${esc(em.inbox)}</b>` : ""}).
-                    Configure a variável <b>RESEND_API_KEY</b> (e o domínio verificado no Resend) nas variáveis de ambiente do Netlify para reativar os envios.
+                    Ative direto pelo painel: cole a chave da API do <b>Resend</b> em <b>Integrações → E-mail</b> (nenhuma variável no servidor é necessária).
                   </p>
+                  <button class="btn sm gold" data-goto="integrations">Configurar e-mail agora</button>
                 </div>
               </div>
             </div>`;
@@ -313,7 +316,7 @@
     try {
       const r = await api("/owner/digest", { method: "POST", body: "{}" });
       if (r.status === "sent") toast("Resumo enviado para " + (r.to || "seu e-mail") + ".");
-      else toast("Resumo gerado, mas o e-mail não saiu (configure RESEND_API_KEY no Netlify).");
+      else toast("Resumo gerado, mas o e-mail não saiu (configure o e-mail em Integrações → E-mail).");
     } catch (e) { toast(e.message); } finally { bd.disabled = false; bd.textContent = old; }
   }); }
 
@@ -332,15 +335,20 @@
   // valores corretos no seletor mesmo antes da migração de preços (evita "R$ 0,00").
   const FALLBACK_PRICE = { basic: 15000, inter: 25000, adv: 35000 };
   const FALLBACK_PERCLIENT = 5000;
+  // Cota de clientes por módulo (modelo atual: Básico 25 / Intermediário 50 /
+  // Avançado 100). Garante o número correto no seletor mesmo que o banco ainda
+  // não tenha aplicado a migração de cotas (evita "ilimitado" indevido).
+  const FALLBACK_QUOTA = { basic: 25, inter: 50, adv: 100 };
   async function openEmitir() {
     await ensurePlans();
     $("#e_plan").innerHTML = PLANS.map((p) => {
       // Plano "Personalizado": o dono define clientes e valor nos campos próprios.
       if (p.id === "custom") return `<option value="custom">Personalizado — definir clientes e valor</option>`;
-      const q = p.client_quota == null ? "ilimitado" : "até " + p.client_quota + " clientes";
+      const quota = p.client_quota != null ? p.client_quota : FALLBACK_QUOTA[p.id];
+      const q = quota == null ? "clientes ilimitados" : "até " + quota + " clientes / empresas";
       const cents = p.price_month_cents || FALLBACK_PRICE[p.id] || 0;
       const per = p.per_client_cents != null ? p.per_client_cents : FALLBACK_PERCLIENT;
-      const perTxt = per ? " + " + brl(per) + "/cliente" : "";
+      const perTxt = per ? " + " + brl(per) + " por cliente adicional" : "";
       return `<option value="${esc(p.id)}">${esc(p.name)} — ${q} — ${brl(cents)}/mês${perTxt}</option>`;
     }).join("");
     ["e_name", "e_doc", "e_email", "e_phone", "e_reason"].forEach((id) => { $("#" + id).value = ""; });
@@ -456,7 +464,7 @@
       em.textContent = `Licença + credenciais enviadas automaticamente para ${r.emailedTo}.`;
       em.style.color = "";
     } else if (r.emailStatus === "queued") {
-      em.textContent = "E-mail automático não configurado (defina RESEND_API_KEY no Netlify). Copie o link e a chave abaixo e envie ao cliente.";
+      em.textContent = "E-mail automático não configurado (ative em Integrações → E-mail). Copie o link e a chave abaixo e envie ao cliente.";
       em.style.color = "#e6b800";
     } else if (r.emailStatus === "error") {
       em.textContent = "Falha no envio automático do e-mail. Copie o link e a chave abaixo e envie ao cliente.";
@@ -505,7 +513,7 @@
         return `<tr>
           <td class="small">${dtt(p.created_at)}</td>
           <td>${esc(p.tenant_name)}<div class="small muted">${esc(p.tenant_email || "")}${p.tenant_phone ? " · " + esc(p.tenant_phone) : ""}</div></td>
-          <td>${esc(p.plan_name || p.plan_id)}<div class="small muted">${p.client_quota == null ? "ilimitado" : p.client_quota + " clientes"}</div></td>
+          <td>${esc(p.plan_name || p.plan_id)}<div class="small muted">${(() => { const qv = p.client_quota != null ? p.client_quota : FALLBACK_QUOTA[p.plan_id]; return qv == null ? "ilimitado" : qv + " clientes"; })()}</div></td>
           <td>${brl(p.amount_cents)}<div class="small muted">${esc(p.billing_type === "recurring" ? "recorrente" : "avulsa")}${p.billing_cycle ? " · " + esc(cycleLabel(p.billing_cycle)) : ""}${p.due_day ? " · vence dia " + p.due_day : ""}</div></td>
           <td class="small">${esc(p.method || "—")}<div class="small muted">${esc(p.gateway || "")}</div></td>
           <td>${sit}</td>
@@ -555,11 +563,16 @@
       const noLine = l.license_no ? `<div class="small muted mono">${esc(l.license_no)} · v${l.version}</div>` : `<div class="small muted mono">v${l.version}</div>`;
       const free = (l.pricing || "paid") === "free";
       const priceBadge = free ? ` <span class="tag issued" title="${esc(l.issue_reason || "Cortesia — sem custo")}">Cortesia</span>` : ` <span class="tag active">Paga</span>`;
+      const bl = l.billing || null;
+      const billLine = bl && !free
+        ? `<div class="small muted">${brl(bl.totalMonthlyCents)}/mês${bl.extraClients ? ` <span class="tag issued" title="${bl.extraClients} cliente(s) além da cota × ${brl(bl.perClientCents)}">+${bl.extraClients} adic.</span>` : ""}</div>`
+        : (free ? `<div class="small muted">sem custo</div>` : "");
+      const extraBadge = bl && bl.extraClients ? ` <span class="tag issued">+${bl.extraClients}</span>` : "";
       return `<tr>
         <td>${esc(l.tenant_name)}${noLine}<div class="small muted mono">${esc(l.license_key)}</div></td>
-        <td>${esc(l.plan_name || l.plan_id)}${priceBadge}</td>
+        <td>${esc(l.plan_name || l.plan_id)}${priceBadge}${billLine}</td>
         <td>${activeTag(l)} <span class="small muted">${esc(statusLabel(l.status))}</span></td>
-        <td>${l.clients_count ?? 0}${quota != null ? " / " + quota : ""}</td>
+        <td>${l.clients_count ?? 0}${quota != null ? " / " + quota : ""}${extraBadge}</td>
         <td>${dt(l.valid_until)}<div class="small muted">${vencBadge(l.valid_until)}${l.billing_cycle ? " · " + esc(cycleLabel(l.billing_cycle)) : ""}</div></td>
         <td style="text-align:right"><button class="btn sm gold" data-manage="${esc(l.id)}">Gerenciar</button></td>
       </tr>`;
@@ -586,6 +599,37 @@
         ${l.custom_price_cents != null ? `<div class="it"><div class="k">Valor combinado</div><div class="v">${brl(l.custom_price_cents)}</div></div>` : ""}
       </div>
 
+      ${(() => {
+        const bl = l.billing; if (!bl) return "";
+        if (bl.free) return `<h3 style="margin-top:14px">Faturamento</h3><p class="small muted">Licença de cortesia — sem cobrança mensal.</p>`;
+        return `<h3 style="margin-top:14px">Faturamento mensal <span class="small muted">(transparente para você)</span></h3>
+        <div class="statline">
+          <div class="it"><div class="k">Base do módulo</div><div class="v">${brl(bl.baseMonthlyCents)}<span class="small muted">/mês</span></div></div>
+          <div class="it"><div class="k">Clientes</div><div class="v">${bl.clients}${bl.unlimited ? " / ∞" : " / " + bl.quota}</div></div>
+          <div class="it"><div class="k">Adicionais</div><div class="v">${bl.extraClients} × ${brl(bl.perClientCents)} = ${brl(bl.overageCents)}</div></div>
+          <div class="it"><div class="k">Total/mês</div><div class="v" style="color:#e9c46a"><b>${brl(bl.totalMonthlyCents)}</b></div></div>
+          <div class="it"><div class="k">Total/ano</div><div class="v">${brl(bl.totalAnnualCents)}</div></div>
+        </div>`;
+      })()}
+
+      <h3 style="margin-top:14px">Emitir boleto / PIX (sob demanda)</h3>
+      <p class="small muted">Gera uma cobrança para <b>qualquer</b> licença — ativa, suspensa, inativa ou vencida. Ao pagar, o acesso é reativado automaticamente. Valor sugerido = fatura do mês (base + adicionais).</p>
+      <div class="row c2">
+        <div class="field"><label>Ciclo</label>
+          <select id="mb_bcycle"><option value="monthly" selected>Mensal — ${l.billing ? brl(l.billing.totalMonthlyCents) : ""}</option><option value="annual">Anual — ${l.billing ? brl(l.billing.totalAnnualCents) : ""}</option></select>
+        </div>
+        <div class="field"><label>Forma</label>
+          <select id="mb_bmethod"><option value="boleto" selected>Boleto</option><option value="pix">PIX</option></select>
+        </div>
+      </div>
+      <div class="field"><label>Valor manual (R$ — opcional, sobrepõe a fatura)</label>
+        <input id="mb_bamount" type="text" inputmode="decimal" placeholder="deixe vazio para usar a fatura calculada">
+      </div>
+      <div class="actrow">
+        <button class="btn sm gold" id="mb_boleto">Emitir cobrança</button>
+      </div>
+      <div id="mb_boleto_out" class="small" style="margin-top:8px"></div>
+
       <h3 style="margin-top:14px">Suporte — acessar e resolver no perfil do cliente</h3>
       <p class="small muted">Acesse o ambiente do cliente para dar suporte, regenere o acesso ou redefina o 2FA quando necessário.</p>
       <div class="actrow">
@@ -599,7 +643,7 @@
       <h3 style="margin-top:14px">Módulo & cota</h3>
       <div class="row c2">
         <div class="field"><label>Mudar módulo (upgrade/downgrade — sem perder dados)</label>
-          <select id="mb_plan">${PLANS.filter((p) => p.id !== "custom" || p.id === l.plan_id).map((p) => `<option value="${esc(p.id)}" ${p.id === l.plan_id ? "selected" : ""}>${esc(p.name)} — ${p.client_quota == null ? "ilimitado" : p.client_quota + " clientes"}</option>`).join("")}</select>
+          <select id="mb_plan">${PLANS.filter((p) => p.id !== "custom" || p.id === l.plan_id).map((p) => { const qv = p.client_quota != null ? p.client_quota : FALLBACK_QUOTA[p.id]; const ql = qv == null ? "ilimitado" : qv + " clientes"; return `<option value="${esc(p.id)}" ${p.id === l.plan_id ? "selected" : ""}>${esc(p.name)} — ${ql}</option>`; }).join("")}</select>
         </div>
         <div class="field"><label>Cota personalizada (vazio = padrão do módulo)</label>
           <input id="mb_quota" type="number" min="0" value="${l.client_quota_override != null ? esc(l.client_quota_override) : ""}" placeholder="ex.: 200">
@@ -632,6 +676,21 @@
 
     const out = (html) => { $("#mb_out").innerHTML = html; };
     const refresh = () => { closeModal("modalManage"); loadLicenses(); };
+
+    $("#mb_boleto").onclick = async () => {
+      const bout = (h) => { $("#mb_boleto_out").innerHTML = h; };
+      const cycle = $("#mb_bcycle").value;
+      const bmethod = $("#mb_bmethod").value;
+      const amountReais = ($("#mb_bamount").value || "").trim();
+      const btn = $("#mb_boleto"); btn.disabled = true; bout(`<span class="muted">Gerando cobrança…</span>`);
+      try {
+        const r = await api(`/owner/licenses/${lid}/boleto`, { method: "POST", body: JSON.stringify({ cycle, method: bmethod, amountReais }) });
+        const link = r.checkoutUrl ? `<div style="margin-top:6px"><a class="btn sm gold" href="${esc(r.checkoutUrl)}" target="_blank" rel="noopener">Abrir link de pagamento</a></div>` : "";
+        bout(`<span class="tag active">cobrança gerada</span> ${esc(r.message || "")}${link}`);
+        loadLicenses();
+      } catch (e) { bout(`<span style="color:#ff9aa8">${esc(e.message)}</span>`); }
+      finally { btn.disabled = false; }
+    };
 
     $("#mb_support").onclick = async () => {
       try {
@@ -1184,6 +1243,19 @@
       const hint = $("#nf_token_hint");
       if (hint) hint.textContent = n.tokenMasked ? `Token atual: ${n.tokenMasked} (deixe em branco para manter)` : "Nenhum token salvo.";
       const tok = $("#nf_token"); if (tok) tok.value = "";
+      // E-mail transacional (Resend)
+      const em = d.email || {};
+      const eb = $("#emailBadge");
+      if (eb) {
+        if (em.configured) { eb.className = "tag active"; eb.textContent = "Ativo"; }
+        else { eb.className = "tag grace"; eb.textContent = "Não configurado"; }
+      }
+      set("em_fromname", em.fromName || "DPO PJ Protection");
+      set("em_fromemail", em.fromEmail || "contato@dpopjprotection.com.br");
+      set("em_inbox", em.inbox || "");
+      const ekh = $("#em_key_hint");
+      if (ekh) ekh.textContent = em.configured ? `Chave atual: ${em.keyMasked} (deixe em branco para manter)` : "Nenhuma chave salva — os e-mails não são enviados.";
+      const ek = $("#em_key"); if (ek) ek.value = "";
       // Bloco de demais integrações (somente leitura, vem do dashboard)
       try {
         const dash = await api("/owner/dashboard");
@@ -1233,6 +1305,37 @@
       try { await api("/owner/integrations/nfse", { method: "POST", body: JSON.stringify({ token: "", clearToken: true }) }); toast("Token removido."); await loadIntegrations(); }
       catch (e) { nfseMsg(e.message, false); }
       finally { clr.disabled = false; }
+    });
+
+    // --- E-mail transacional (Resend) ---
+    const emailMsg = (text, ok) => { const m = $("#emailMsg"); if (!m) return; m.style.color = ok ? "#8fe6a0" : "#ff9aa8"; m.textContent = text || ""; };
+    const emailPayload = () => {
+      const v = (id) => { const el = $("#" + id); return el ? el.value.trim() : ""; };
+      const p = { fromName: v("em_fromname"), fromEmail: v("em_fromemail") };
+      const k = v("em_key"); if (k) p.apiKey = k; // só envia se preenchido
+      return p;
+    };
+    const esave = $("#btnEmailSave");
+    if (esave) esave.addEventListener("click", async () => {
+      esave.disabled = true; emailMsg("Salvando…", true);
+      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(emailPayload()) }); emailMsg("Configuração de e-mail salva.", true); toast("E-mail salvo."); await loadIntegrations(); }
+      catch (e) { emailMsg(e.message, false); }
+      finally { esave.disabled = false; }
+    });
+    const etest = $("#btnEmailTest");
+    if (etest) etest.addEventListener("click", async () => {
+      etest.disabled = true; emailMsg("Enviando e-mail de teste…", true);
+      try { const r = await api("/owner/integrations/email/test", { method: "POST", body: JSON.stringify({}) }); emailMsg(r.message || "E-mail de teste enviado.", true); toast("E-mail de teste enviado."); }
+      catch (e) { emailMsg(e.message, false); }
+      finally { etest.disabled = false; }
+    });
+    const eclr = $("#btnEmailClearKey");
+    if (eclr) eclr.addEventListener("click", async () => {
+      if (!confirm("Remover a chave salva? A plataforma volta a usar a variável de ambiente (se houver) — sem ela, os e-mails não são enviados.")) return;
+      eclr.disabled = true;
+      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify({ apiKey: "", clearKey: true }) }); toast("Chave removida."); await loadIntegrations(); }
+      catch (e) { emailMsg(e.message, false); }
+      finally { eclr.disabled = false; }
     });
   })();
 

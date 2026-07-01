@@ -108,6 +108,9 @@
   function showErr(m) { const e = $("#err"); e.textContent = m; e.classList.remove("hide"); }
 
   let PLANS = [], GATEWAYS = [], selected = null;
+  // Cota de clientes por módulo (Básico 25 / Intermediário 50 / Avançado 100).
+  // Fallback garante o número correto mesmo se o banco não migrou as cotas.
+  const FALLBACK_QUOTA = { basic: 25, inter: 50, adv: 100 };
 
   function billing() { return document.querySelector('input[name="billing"]:checked').value; }
   function cycle() { const c = document.querySelector('input[name="cycle"]:checked'); return c ? c.value : "monthly"; }
@@ -169,9 +172,10 @@
       PLANS = d.plans || []; GATEWAYS = d.gateways || [];
       $("#plans").innerHTML = PLANS.map((p) => {
         const feats = Array.isArray(p.features) ? p.features : (p.features?.items || p.features?.list || []);
-        const q = p.client_quota == null ? "Clientes ilimitados" : "Até " + p.client_quota + " clientes";
+        const quota = p.client_quota != null ? p.client_quota : FALLBACK_QUOTA[p.id];
+        const q = quota == null ? "Clientes ilimitados" : "Até " + quota + " clientes / empresas";
         const per = p.per_client_cents != null ? p.per_client_cents : 5000;
-        const perLine = per ? `<div class="small" style="color:var(--gold2);font-weight:700">+ ${brl(per)} por cliente gerenciado</div>` : "";
+        const perLine = per ? `<div class="small" style="color:var(--gold2);font-weight:700">+ ${brl(per)} por cliente adicional</div>` : "";
         return `<div class="card plan" data-id="${esc(p.id)}">
           <h3>${esc(p.name)}</h3>
           <div class="price">${brl(p.price_month_cents)}<span class="small muted" style="font-weight:400">/mês</span></div>

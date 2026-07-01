@@ -272,6 +272,37 @@
       </div>
     </div>
 
+    <!-- E-mail transacional (Resend) -->
+    <div class="card" id="cardEmail" style="margin-top:16px">
+      <div class="flex between wrap-actions">
+        <h2 style="margin:0">E-mail transacional — Resend <span class="info-dot" data-info="integ_email" title="Entenda este bloco">i</span></h2>
+        <span id="emailBadge" class="tag grace">Carregando…</span>
+      </div>
+      <p class="muted small" style="margin-top:6px">Ativa o envio de e-mails da plataforma (link de ativação de licença, avisos de cobrança e notificações de chamados). Crie uma conta grátis no <b>resend.com</b>, verifique o domínio <b>dpopjprotection.com.br</b> e gere uma API Key. Cole a chave abaixo — tem precedência sobre variáveis do servidor.</p>
+
+      <div class="row c2" style="margin-top:12px">
+        <div class="field"><label>API Key do Resend *</label>
+          <input id="em_key" placeholder="(em branco mantém a chave atual)" autocomplete="off">
+          <div class="small muted" id="em_key_hint">—</div>
+        </div>
+        <div class="field"><label>Caixa de suporte (recebe avisos)</label>
+          <input id="em_inbox" placeholder="pedrobj@gmail.com" disabled>
+          <div class="small muted">Definida por SUPPORT_EMAIL/OWNER_EMAIL.</div>
+        </div>
+      </div>
+      <div class="row c2">
+        <div class="field"><label>Nome do remetente</label><input id="em_fromname" placeholder="DPO PJ Protection"></div>
+        <div class="field"><label>E-mail do remetente</label><input id="em_fromemail" placeholder="contato@dpopjprotection.com.br"></div>
+      </div>
+
+      <div id="emailMsg" class="small" style="margin-top:4px"></div>
+      <div class="flex wrap-actions" style="gap:8px;margin-top:10px">
+        <button class="btn gold" id="btnEmailSave">Salvar configuração</button>
+        <button class="btn ghost" id="btnEmailTest" title="Envia um e-mail de teste para a caixa de suporte">Enviar e-mail de teste</button>
+        <button class="btn ghost" id="btnEmailClearKey" title="Remove a chave salva (volta a valer a variável de ambiente)">Limpar chave</button>
+      </div>
+    </div>
+
     <!-- Demais integrações (somente leitura: configuradas por variável de ambiente) -->
     <div class="card" style="margin-top:16px">
       <h2 style="margin:0">Pagamentos & avisos <span class="info-dot" data-info="integ_others" title="Entenda este bloco">i</span></h2>

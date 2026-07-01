@@ -1,6 +1,20 @@
 // Notificacoes: e-mail (Resend) e WhatsApp (Meta Cloud API).
 // Toda notificacao e registrada em `notifications` para auditoria.
 import { sql } from "./db.js";
+import { getSetting } from "./settings.js";
+
+// Config do e-mail transacional com PRECEDENCIA do painel (Integracoes) sobre a
+// env. Assim o Dono ativa os envios direto na plataforma, sem depender de mexer
+// nas variaveis de ambiente do Netlify. Se nada estiver configurado, retorna
+// key vazia e o envio e apenas registrado como "queued" (sem quebrar o fluxo).
+export async function emailConfig() {
+  const [key, fromName, fromEmail] = await Promise.all([
+    getSetting("RESEND_API_KEY", "RESEND_API_KEY", ""),
+    getSetting("NOTIFY_FROM_NAME", "NOTIFY_FROM_NAME", "DPO PJ Protection"),
+    getSetting("NOTIFY_FROM_EMAIL", "NOTIFY_FROM_EMAIL", "contato@dpopjprotection.com.br"),
+  ]);
+  return { key: key || "", fromName, fromEmail, configured: !!(key && key.trim()) };
+}
 
 // Timeout duro para qualquer chamada a provedor externo (Resend/WhatsApp).
 // Sem isto, um provedor lento/inacessivel deixaria a funcao serverless pendurada
@@ -17,13 +31,14 @@ async function fetchWithTimeout(url, opts) {
 
 export async function sendEmail({ tenantId = null, to, subject, html, type = "info" }) {
   let status = "queued", err = null;
-  if (process.env.RESEND_API_KEY && to) {
+  const cfg = await emailConfig();
+  if (cfg.configured && to) {
     try {
       const r = await fetchWithTimeout("https://api.resend.com/emails", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${cfg.key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: `${process.env.NOTIFY_FROM_NAME || "DPO PJ Protection"} <${process.env.NOTIFY_FROM_EMAIL || "contato@dpopjprotection.com.br"}>`,
+          from: `${cfg.fromName} <${cfg.fromEmail}>`,
           to: [to], subject, html,
         }),
       });

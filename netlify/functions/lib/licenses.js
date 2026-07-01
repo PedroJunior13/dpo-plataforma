@@ -7,6 +7,62 @@ import { licenseEvent } from "./audit.js";
 const GRACE_DAYS = parseInt(process.env.GRACE_DAYS || "5", 10);
 const APP_BASE_URL = process.env.APP_BASE_URL || "https://app.dpopjprotection.com.br";
 
+// Cota padrao por modulo (modelo atual): Basico 25 / Intermediario 50 / Avancado 100.
+// Fallback usado quando o banco ainda nao aplicou a migracao de cotas.
+export const QUOTA_DEFAULTS = { basic: 25, inter: 50, adv: 100 };
+const PER_CLIENT_DEFAULT_CENTS = 5000; // R$ 50,00 por cliente adicional
+
+// ---------------------------------------------------------------
+//  FATURAMENTO POR CLIENTE (metered) — transparencia para o dono
+//  Fatura MENSAL do consultor = base do modulo + R$ (per_client) por cliente
+//  ADICIONAL alem da cota incluida no plano. Cortesia = base 0 (mas conta adicionais? nao:
+//  cortesia nao gera cobranca — total 0). Ilimitado = sem adicionais.
+// ---------------------------------------------------------------
+export async function computeBilling(tenantId) {
+  const tenant = await one(sql`SELECT * FROM tenants WHERE id=${tenantId}`);
+  if (!tenant) return null;
+  const lic = await one(sql`SELECT * FROM licenses WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
+  const sub = await one(sql`SELECT * FROM subscriptions WHERE tenant_id=${tenantId} ORDER BY created_at DESC LIMIT 1`);
+  const planId = lic?.plan_id || tenant.plan_id || "basic";
+  const plan = await one(sql`SELECT * FROM plans WHERE id=${planId}`);
+  const cnt = await one(sql`SELECT count(*)::int AS n FROM clients WHERE tenant_id=${tenantId}`);
+  return billingFrom({ tenant, lic, sub, plan, planId, clients: cnt?.n || 0 });
+}
+
+// Nucleo do calculo — reusavel a partir de uma linha ja carregada (evita N+1 na
+// listagem de licencas do painel). Recebe: tenant, lic, sub, plan, planId, clients.
+export function billingFrom({ tenant, lic, sub, plan, planId, clients }) {
+  planId = planId || lic?.plan_id || tenant?.plan_id || "basic";
+  const free = (lic?.pricing || "paid") === "free";
+  // Cota incluida: override do tenant > snapshot da licenca > cota do plano > fallback.
+  let quota = tenant?.client_quota_override != null ? tenant.client_quota_override
+            : (lic?.client_quota != null ? lic.client_quota
+            : (plan && plan.client_quota != null && plan.client_quota > 0 ? plan.client_quota
+            : (QUOTA_DEFAULTS[planId] != null ? QUOTA_DEFAULTS[planId] : null)));
+  const unlimited = quota == null;
+  const perClientCents = plan && plan.per_client_cents != null ? plan.per_client_cents : PER_CLIENT_DEFAULT_CENTS;
+  const recurring = (sub?.billing_type || lic?.billing_type) === "recurring";
+  const cycle = sub?.billing_cycle || lic?.billing_cycle || "monthly";
+  // Base mensal de referencia.
+  let baseMonthlyCents;
+  if (free) baseMonthlyCents = 0;
+  else if (lic?.custom_price_cents != null) baseMonthlyCents = lic.custom_price_cents;
+  else baseMonthlyCents = recurring ? (plan?.price_recurring_cents || 0) : (plan?.price_month_cents || 0);
+  const extraClients = unlimited ? 0 : Math.max(0, (clients || 0) - quota);
+  // Cortesia nao gera cobranca de adicionais.
+  const overageCents = free ? 0 : extraClients * perClientCents;
+  const totalMonthlyCents = baseMonthlyCents + overageCents;
+  const annualBaseCents = free ? 0 : (plan?.price_annual_cents || Math.round((plan?.price_month_cents || 0) * 12 * 0.85));
+  return {
+    tenantId: tenant?.id, planId, planName: plan?.name || planId,
+    clients: clients || 0, quota, unlimited, free, cycle, recurring,
+    perClientCents, baseMonthlyCents, extraClients, overageCents, totalMonthlyCents,
+    annualBaseCents,
+    // Total anual = base anual + adicionais nos 12 meses (transparencia p/ boleto anual).
+    totalAnnualCents: annualBaseCents + overageCents * 12,
+  };
+}
+
 // ---------------------------------------------------------------
 //  Link de ativacao pronto para enviar ao cliente
 // ---------------------------------------------------------------
@@ -57,9 +113,16 @@ export async function issueLicense({ tenantId = null, tenant = null, planId, bil
   // - cota custom (>0) vira o snapshot da licenca E o override do tenant (trava real);
   // - cota null/0 => usa a cota padrao do plano.
   // - valor custom (>=0, centavos) e gravado em custom_price_cents (informativo).
+  // Cota padrao por modulo (modelo atual). Fallback defensivo: se o banco ainda
+  // nao aplicou a migracao de cotas (ex.: basic com client_quota nulo/errado),
+  // a licenca emitida mesmo assim recebe o numero correto de clientes.
+  const QUOTA_DEFAULTS = { basic: 25, inter: 50, adv: 100 };
+  const planQuota = (plan.client_quota != null && plan.client_quota > 0)
+    ? plan.client_quota
+    : (QUOTA_DEFAULTS[planId] != null ? QUOTA_DEFAULTS[planId] : plan.client_quota);
   const cqNum = parseInt(customQuota, 10);
   const hasCustomQuota = Number.isFinite(cqNum) && cqNum > 0;
-  const licQuota = hasCustomQuota ? cqNum : plan.client_quota;
+  const licQuota = hasCustomQuota ? cqNum : planQuota;
   const cpcNum = parseInt(customPriceCents, 10);
   const hasCustomPrice = Number.isFinite(cpcNum) && cpcNum >= 0;
 
@@ -348,6 +411,9 @@ export async function effectiveQuota(tenant) {
   if (tenant.is_owner) return null; // ilimitado
   if (tenant.client_quota_override != null) return tenant.client_quota_override;
   const plan = await one(sql`SELECT client_quota FROM plans WHERE id=${tenant.plan_id}`);
+  const QUOTA_DEFAULTS = { basic: 25, inter: 50, adv: 100 };
+  if (plan && plan.client_quota != null && plan.client_quota > 0) return plan.client_quota;
+  if (QUOTA_DEFAULTS[tenant.plan_id] != null) return QUOTA_DEFAULTS[tenant.plan_id];
   return plan ? plan.client_quota : 0;
 }
 

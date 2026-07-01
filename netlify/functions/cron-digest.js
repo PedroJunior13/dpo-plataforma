@@ -5,7 +5,7 @@
 // tempo de espera (SLA). E 100% somente-leitura: nao altera nenhum dado, apenas le e
 // dispara 1 e-mail. Reaproveitavel pelo painel (botao "Enviar resumo agora").
 import { sql } from "./lib/db.js";
-import { sendEmail } from "./lib/notify.js";
+import { sendEmail, emailConfig } from "./lib/notify.js";
 
 export const config = { schedule: "0 12 * * 1" };
 
@@ -74,7 +74,7 @@ export async function buildDigest() {
     WHERE first_response_at IS NULL AND status NOT IN ('fechado','resolvido')
     ORDER BY created_at ASC LIMIT 10`, []);
 
-  const emailConfigured = !!process.env.RESEND_API_KEY;
+  const emailConfigured = (await safe(emailConfig(), { configured: false })).configured;
   return {
     generatedAt: new Date().toISOString(),
     totals, mrrCents: mrr, newSubs,
@@ -123,7 +123,7 @@ export function renderDigestHtml(d) {
 
   const emailWarn = d.emailConfigured ? "" :
     `<div style="margin:14px 0;padding:12px 14px;border:1px solid #f0b232;border-radius:10px;background:rgba(240,178,50,.12);color:#f3d171;font-size:13px">
-       ⚠️ <b>E-mail transacional não configurado</b> — defina <b>RESEND_API_KEY</b> no Netlify. (Você só está recebendo este resumo porque o teste conseguiu enviar; sem a chave, ativações e cobranças não são enviadas.)
+       ⚠️ <b>E-mail transacional não configurado</b> — configure a chave do Resend em <b>Painel → Integrações → E-mail</b>. Sem ela, ativações e cobranças não são enviadas.
      </div>`;
 
   return `<div style="background:#071223;padding:24px;font-family:Segoe UI,Arial,sans-serif">
