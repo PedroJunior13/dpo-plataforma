@@ -769,23 +769,16 @@ async function ownerRoutes(req, user, seg, method) {
   // GET: estado atual (token mascarado) + diagnostico do que falta.
   if (r === "integrations" && method === "GET") {
     const ecfg = await emailConfig();
-    return ok({
-      nfse: await nfse.status(),
-      email: {
-        configured: ecfg.configured,
-        // Nunca devolvemos a chave; so um mascarado indicando que existe.
-        keyMasked: ecfg.configured ? "••••••••" + String(ecfg.key).slice(-4) : "",
-        fromName: ecfg.fromName,
-        fromEmail: ecfg.fromEmail,
-        inbox: SUPPORT_INBOX(),
-      },
-    });
+    return ok({ nfse: await nfse.status(), email: emailPublic(ecfg) });
   }
-  // POST: salva a config do e-mail transacional (Resend) — precedencia sobre env.
-  // A chave so e sobrescrita quando enviada nao-vazia (evita apagar por engano).
+  // POST: salva a config do e-mail transacional — precedencia sobre env. Suporta
+  // dois provedores: "resend" (chave de API) e "smtp" (caixa que o Dono ja possui).
+  // Segredos (chave/senha) so sao sobrescritos quando enviados nao-vazios e nao
+  // mascarados (evita apagar por engano ao regravar os demais campos).
   if (seg[1] === "integrations" && seg[2] === "email" && seg[3] == null && method === "POST") {
     const b = await readJson(req).catch(() => ({}));
     const patch = {};
+    if (typeof b.provider === "string" && ["resend", "smtp"].includes(b.provider.trim().toLowerCase())) patch.EMAIL_PROVIDER = b.provider.trim().toLowerCase();
     if (typeof b.fromName === "string") patch.NOTIFY_FROM_NAME = b.fromName.trim();
     if (typeof b.fromEmail === "string") patch.NOTIFY_FROM_EMAIL = b.fromEmail.trim();
     if (typeof b.apiKey === "string") {
@@ -793,22 +786,33 @@ async function ownerRoutes(req, user, seg, method) {
       if (k && !/^[•*]/.test(k)) patch.RESEND_API_KEY = k; // ignora valor mascarado
       else if (b.clearKey === true) patch.RESEND_API_KEY = "";
     }
+    // Campos SMTP.
+    if (typeof b.smtpHost === "string") patch.SMTP_HOST = b.smtpHost.trim();
+    if (typeof b.smtpPort === "string" || typeof b.smtpPort === "number") patch.SMTP_PORT = String(b.smtpPort).trim();
+    if (typeof b.smtpSecure !== "undefined") patch.SMTP_SECURE = (b.smtpSecure === true || b.smtpSecure === "true" || b.smtpSecure === 1) ? "true" : "false";
+    if (typeof b.smtpUser === "string") patch.SMTP_USER = b.smtpUser.trim();
+    if (typeof b.smtpPass === "string") {
+      const p = b.smtpPass; // senha de app pode conter espacos — nao damos trim
+      if (p && !/^[•*]/.test(p)) patch.SMTP_PASS = p;
+      else if (b.clearSmtpPass === true) patch.SMTP_PASS = "";
+    }
     await setSettings(patch, user.email);
     await audit({ actorEmail: user.email, action: "integrations_email_updated", entity: "settings",
       detail: { keys: Object.keys(patch) }, ip: clientIp(req) });
-    const ecfg = await emailConfig();
-    return ok({ email: { configured: ecfg.configured, keyMasked: ecfg.configured ? "••••••••" + String(ecfg.key).slice(-4) : "", fromName: ecfg.fromName, fromEmail: ecfg.fromEmail, inbox: SUPPORT_INBOX() } });
+    return ok({ email: emailPublic(await emailConfig()) });
   }
   // POST .../test: envia um e-mail de teste para a caixa de suporte do Dono.
   if (seg[1] === "integrations" && seg[2] === "email" && seg[3] === "test" && method === "POST") {
     const ecfg = await emailConfig();
-    if (!ecfg.configured) return fail("Informe a chave da API do Resend para ativar os envios.", 400);
+    if (!ecfg.configured) return fail(ecfg.provider === "smtp"
+      ? "Preencha servidor SMTP, usuário e senha para ativar os envios."
+      : "Informe a chave da API do Resend para ativar os envios.", 400);
     const to = SUPPORT_INBOX();
     const res = await sendEmail({ to, type: "test",
       subject: "Teste de e-mail — DPO PJ Protection",
-      html: `<p>Este é um e-mail de teste da plataforma <b>DPO PJ Protection</b>.</p><p>Se você recebeu esta mensagem, o envio transacional está funcionando corretamente.</p>` });
-    if (res.status === "sent") return ok({ sent: true, to, message: `E-mail de teste enviado para ${to}. Confira a caixa de entrada.` });
-    return fail(`Falha ao enviar (${res.status}). ${res.err ? "Detalhe: " + String(res.err).slice(0, 200) : "Verifique a chave e o domínio verificado no Resend."}`, 400);
+      html: `<p>Este é um e-mail de teste da plataforma <b>DPO PJ Protection</b>.</p><p>Se você recebeu esta mensagem, o envio transacional está funcionando corretamente (provedor: <b>${ecfg.provider === "smtp" ? "SMTP" : "Resend"}</b>).</p>` });
+    if (res.status === "sent") return ok({ sent: true, to, message: `E-mail de teste enviado para ${to}. Confira a caixa de entrada (e a pasta de spam).` });
+    return fail(`Falha ao enviar (${res.status}). ${res.err ? "Detalhe: " + String(res.err).slice(0, 220) : (ecfg.provider === "smtp" ? "Verifique servidor, porta, usuário e senha." : "Verifique a chave e o domínio verificado no Resend.")}`, 400);
   }
   // POST: salva os parametros de emissao da NFS-e (precedencia sobre env).
   // O token so e sobrescrito quando enviado nao-vazio (evita apagar por engano).
@@ -1397,6 +1401,28 @@ function stripMsgAttachment(m) {
 }
 function httpError(msg, status) { const e = new Error(msg); e.httpStatus = status; return e; }
 // Escape para conteudo em HTML de e-mail (evita injecao no corpo da mensagem).
+// Monta a visao PUBLICA da config de e-mail para o painel: nunca expoe segredos
+// (chave do Resend / senha SMTP), apenas mascaras indicando se existem.
+function emailPublic(ecfg) {
+  return {
+    provider: ecfg.provider,
+    configured: ecfg.configured,
+    resendOk: ecfg.resendOk,
+    smtpOk: ecfg.smtpOk,
+    keyMasked: ecfg.resendOk ? "••••••••" + String(ecfg.key).slice(-4) : "",
+    fromName: ecfg.fromName,
+    fromEmail: ecfg.fromEmail,
+    inbox: SUPPORT_INBOX(),
+    smtp: {
+      host: ecfg.smtp.host,
+      port: ecfg.smtp.port,
+      secure: ecfg.smtp.secure,
+      user: ecfg.smtp.user,
+      passMasked: ecfg.smtp.pass ? "••••••••" : "",
+    },
+  };
+}
+
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

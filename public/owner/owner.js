@@ -104,7 +104,7 @@
     // --- Integrações ---
     sec_integrations: { t: "Integrações", b: "Conexões externas da plataforma: emissão de NFS-e (Focus NFe), gateways de pagamento e canais de aviso (e-mail/WhatsApp). Os parâmetros salvos aqui têm precedência sobre as variáveis de ambiente — você ajusta tudo pelo painel, sem mexer no servidor." },
     integ_nfse: { t: "NFS-e (Focus NFe)", b: "Emissão automática da nota fiscal de serviço a cada pagamento aprovado, via Focus NFe (que abstrai o padrão de cada prefeitura). Obrigatórios: token, CNPJ do emitente, Inscrição Municipal e Código do Município (IBGE). Use o ambiente de Homologação para testar antes de ligar a Produção.", b2: "Dica: o item da lista de serviço 1.07 e a alíquota de ISS 2% são os padrões para licenciamento/suporte em TI no Simples Nacional — confirme com a sua contabilidade." },
-    integ_email: { t: "E-mail transacional (Resend)", b: "Ativa o envio automático de e-mails da plataforma: link de ativação de licença para o cliente, avisos de vencimento/cobrança e notificações de chamados de suporte. Sem isso, nada é enviado por e-mail (você só vê os links no painel).", b2: "Como ativar: crie uma conta grátis em resend.com, adicione e verifique o domínio dpopjprotection.com.br (registros DNS SPF/DKIM), gere uma API Key e cole aqui. Use 'Enviar e-mail de teste' para confirmar. A chave salva aqui tem precedência sobre a variável de ambiente do servidor." },
+    integ_email: { t: "E-mail transacional (SMTP ou Resend)", b: "Ativa o envio automático de e-mails da plataforma: link de ativação de licença para o cliente, avisos de vencimento/cobrança e notificações de chamados de suporte. Sem isso, nada é enviado por e-mail (você só vê os links no painel).", b2: "Dois métodos: (1) SMTP — use uma caixa que você JÁ tem (um Gmail com 'senha de app', ou o e-mail do seu domínio): informe servidor, porta, usuário e senha; não precisa criar conta nova nem verificar domínio. (2) Resend — API dedicada: crie conta grátis em resend.com, verifique o domínio e cole a API Key. Depois use 'Enviar e-mail de teste' para confirmar. A configuração salva aqui tem precedência sobre variáveis de ambiente." },
     integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto. O e-mail transacional tem card próprio acima." },
   };
   function openInfo(key) {
@@ -1243,19 +1243,31 @@
       const hint = $("#nf_token_hint");
       if (hint) hint.textContent = n.tokenMasked ? `Token atual: ${n.tokenMasked} (deixe em branco para manter)` : "Nenhum token salvo.";
       const tok = $("#nf_token"); if (tok) tok.value = "";
-      // E-mail transacional (Resend)
+      // E-mail transacional (SMTP ou Resend)
       const em = d.email || {};
+      const provider = em.provider === "resend" ? "resend" : "smtp";
       const eb = $("#emailBadge");
       if (eb) {
-        if (em.configured) { eb.className = "tag active"; eb.textContent = "Ativo"; }
+        if (em.configured) { eb.className = "tag active"; eb.textContent = provider === "smtp" ? "Ativo (SMTP)" : "Ativo (Resend)"; }
         else { eb.className = "tag grace"; eb.textContent = "Não configurado"; }
       }
+      set("em_provider", provider);
       set("em_fromname", em.fromName || "DPO PJ Protection");
       set("em_fromemail", em.fromEmail || "contato@dpopjprotection.com.br");
       set("em_inbox", em.inbox || "");
+      // Resend
       const ekh = $("#em_key_hint");
-      if (ekh) ekh.textContent = em.configured ? `Chave atual: ${em.keyMasked} (deixe em branco para manter)` : "Nenhuma chave salva — os e-mails não são enviados.";
+      if (ekh) ekh.textContent = em.resendOk ? `Chave atual: ${em.keyMasked} (deixe em branco para manter)` : "Nenhuma chave salva.";
       const ek = $("#em_key"); if (ek) ek.value = "";
+      // SMTP
+      const smtp = em.smtp || {};
+      set("em_smtp_host", smtp.host || "");
+      set("em_smtp_user", smtp.user || "");
+      set("em_smtp_secure", (smtp.secure === false ? "false" : "true"));
+      const sp = $("#em_smtp_pass"); if (sp) sp.value = "";
+      const sph = $("#em_smtp_pass_hint");
+      if (sph) sph.textContent = smtp.passMasked ? "Senha salva (deixe em branco para manter)." : "Nenhuma senha salva.";
+      toggleEmailProvider();
       // Bloco de demais integrações (somente leitura, vem do dashboard)
       try {
         const dash = await api("/owner/dashboard");
@@ -1307,14 +1319,27 @@
       finally { clr.disabled = false; }
     });
 
-    // --- E-mail transacional (Resend) ---
+    // --- E-mail transacional (SMTP ou Resend) ---
     const emailMsg = (text, ok) => { const m = $("#emailMsg"); if (!m) return; m.style.color = ok ? "#8fe6a0" : "#ff9aa8"; m.textContent = text || ""; };
+    const emProvider = () => { const el = $("#em_provider"); return el && el.value === "resend" ? "resend" : "smtp"; };
     const emailPayload = () => {
       const v = (id) => { const el = $("#" + id); return el ? el.value.trim() : ""; };
-      const p = { fromName: v("em_fromname"), fromEmail: v("em_fromemail") };
-      const k = v("em_key"); if (k) p.apiKey = k; // só envia se preenchido
+      const raw = (id) => { const el = $("#" + id); return el ? el.value : ""; };
+      const provider = emProvider();
+      const p = { provider, fromName: v("em_fromname"), fromEmail: v("em_fromemail") };
+      if (provider === "resend") {
+        const k = v("em_key"); if (k) p.apiKey = k; // só envia se preenchido
+      } else {
+        p.smtpHost = v("em_smtp_host");
+        p.smtpUser = v("em_smtp_user");
+        p.smtpSecure = ($("#em_smtp_secure") && $("#em_smtp_secure").value === "false") ? "false" : "true";
+        p.smtpPort = p.smtpSecure === "true" ? "465" : "587";
+        const pw = raw("em_smtp_pass"); if (pw) p.smtpPass = pw; // senha pode ter espaços; só envia se preenchida
+      }
       return p;
     };
+    const provSel = $("#em_provider");
+    if (provSel) provSel.addEventListener("change", toggleEmailProvider);
     const esave = $("#btnEmailSave");
     if (esave) esave.addEventListener("click", async () => {
       esave.disabled = true; emailMsg("Salvando…", true);
@@ -1324,20 +1349,35 @@
     });
     const etest = $("#btnEmailTest");
     if (etest) etest.addEventListener("click", async () => {
-      etest.disabled = true; emailMsg("Enviando e-mail de teste…", true);
-      try { const r = await api("/owner/integrations/email/test", { method: "POST", body: JSON.stringify({}) }); emailMsg(r.message || "E-mail de teste enviado.", true); toast("E-mail de teste enviado."); }
+      etest.disabled = true; emailMsg("Salvando e enviando e-mail de teste…", true);
+      try {
+        // Salva primeiro (para o teste usar exatamente o que está na tela), depois testa.
+        await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(emailPayload()) });
+        const r = await api("/owner/integrations/email/test", { method: "POST", body: JSON.stringify({}) });
+        emailMsg(r.message || "E-mail de teste enviado.", true); toast("E-mail de teste enviado."); await loadIntegrations();
+      }
       catch (e) { emailMsg(e.message, false); }
       finally { etest.disabled = false; }
     });
     const eclr = $("#btnEmailClearKey");
     if (eclr) eclr.addEventListener("click", async () => {
-      if (!confirm("Remover a chave salva? A plataforma volta a usar a variável de ambiente (se houver) — sem ela, os e-mails não são enviados.")) return;
+      const isSmtp = emProvider() === "smtp";
+      if (!confirm(isSmtp ? "Remover a senha SMTP salva? Sem ela, os e-mails não são enviados." : "Remover a chave do Resend salva? A plataforma volta a usar a variável de ambiente (se houver).")) return;
       eclr.disabled = true;
-      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify({ apiKey: "", clearKey: true }) }); toast("Chave removida."); await loadIntegrations(); }
+      const body = isSmtp ? { smtpPass: "", clearSmtpPass: true } : { apiKey: "", clearKey: true };
+      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(body) }); toast("Segredo removido."); await loadIntegrations(); }
       catch (e) { emailMsg(e.message, false); }
       finally { eclr.disabled = false; }
     });
   })();
+
+  // Mostra o bloco do provedor de e-mail selecionado (SMTP x Resend).
+  function toggleEmailProvider() {
+    const sel = $("#em_provider"); const prov = sel && sel.value === "resend" ? "resend" : "smtp";
+    const smtp = $("#em_smtp_block"); const resend = $("#em_resend_block");
+    if (smtp) smtp.style.display = prov === "smtp" ? "" : "none";
+    if (resend) resend.style.display = prov === "resend" ? "" : "none";
+  }
 
   // ===================================================================
   //  AUDITORIA (trilha completa)

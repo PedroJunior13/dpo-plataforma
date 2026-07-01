@@ -275,31 +275,62 @@
     <!-- E-mail transacional (Resend) -->
     <div class="card" id="cardEmail" style="margin-top:16px">
       <div class="flex between wrap-actions">
-        <h2 style="margin:0">E-mail transacional — Resend <span class="info-dot" data-info="integ_email" title="Entenda este bloco">i</span></h2>
+        <h2 style="margin:0">E-mail transacional <span class="info-dot" data-info="integ_email" title="Entenda este bloco">i</span></h2>
         <span id="emailBadge" class="tag grace">Carregando…</span>
       </div>
-      <p class="muted small" style="margin-top:6px">Ativa o envio de e-mails da plataforma (link de ativação de licença, avisos de cobrança e notificações de chamados). Crie uma conta grátis no <b>resend.com</b>, verifique o domínio <b>dpopjprotection.com.br</b> e gere uma API Key. Cole a chave abaixo — tem precedência sobre variáveis do servidor.</p>
+      <p class="muted small" style="margin-top:6px">Ativa o envio de e-mails da plataforma (link de ativação de licença, avisos de cobrança e notificações de chamados). Escolha o método abaixo — a configuração salva aqui tem <b>precedência</b> sobre variáveis do servidor.</p>
 
-      <div class="row c2" style="margin-top:12px">
-        <div class="field"><label>API Key do Resend *</label>
+      <div class="field" style="margin-top:10px"><label>Método de envio</label>
+        <select id="em_provider">
+          <option value="smtp">SMTP — use um e-mail que você já tem (sem criar conta nova)</option>
+          <option value="resend">Resend — API dedicada (requer conta + domínio verificado)</option>
+        </select>
+      </div>
+
+      <!-- SMTP: caminho de menor atrito (usa uma caixa existente) -->
+      <div id="em_smtp_block">
+        <div class="note ok" style="margin-top:8px">Use uma caixa que você <b>já possui</b>: um <b>Gmail</b> (com “senha de app”) ou o e-mail do seu <b>próprio domínio</b>. Não precisa criar conta de serviço nem verificar domínio em terceiros.</div>
+        <div class="row c2" style="margin-top:10px">
+          <div class="field"><label>Servidor SMTP *</label><input id="em_smtp_host" placeholder="smtp.gmail.com" autocomplete="off"></div>
+          <div class="field"><label>Porta / segurança</label>
+            <select id="em_smtp_secure">
+              <option value="true">465 — SSL/TLS (recomendado)</option>
+              <option value="false">587 — STARTTLS</option>
+            </select>
+          </div>
+        </div>
+        <div class="row c2">
+          <div class="field"><label>Usuário (e-mail de login) *</label><input id="em_smtp_user" placeholder="voce@dpopjprotection.com.br" autocomplete="off"></div>
+          <div class="field"><label>Senha / senha de app *</label>
+            <input id="em_smtp_pass" type="password" placeholder="(em branco mantém a atual)" autocomplete="new-password">
+            <div class="small muted" id="em_smtp_pass_hint">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resend: alternativa por API -->
+      <div id="em_resend_block">
+        <div class="note" style="margin-top:8px">Crie uma conta grátis no <b>resend.com</b>, verifique o domínio <b>dpopjprotection.com.br</b> e gere uma API Key.</div>
+        <div class="field" style="margin-top:10px"><label>API Key do Resend *</label>
           <input id="em_key" placeholder="(em branco mantém a chave atual)" autocomplete="off">
           <div class="small muted" id="em_key_hint">—</div>
         </div>
-        <div class="field"><label>Caixa de suporte (recebe avisos)</label>
-          <input id="em_inbox" placeholder="pedrobj@gmail.com" disabled>
-          <div class="small muted">Definida por SUPPORT_EMAIL/OWNER_EMAIL.</div>
-        </div>
       </div>
-      <div class="row c2">
+
+      <div class="row c2" style="margin-top:6px">
         <div class="field"><label>Nome do remetente</label><input id="em_fromname" placeholder="DPO PJ Protection"></div>
         <div class="field"><label>E-mail do remetente</label><input id="em_fromemail" placeholder="contato@dpopjprotection.com.br"></div>
+      </div>
+      <div class="field"><label>Caixa de suporte (recebe avisos)</label>
+        <input id="em_inbox" placeholder="pedrobj@gmail.com" disabled>
+        <div class="small muted">Definida por SUPPORT_EMAIL/OWNER_EMAIL.</div>
       </div>
 
       <div id="emailMsg" class="small" style="margin-top:4px"></div>
       <div class="flex wrap-actions" style="gap:8px;margin-top:10px">
         <button class="btn gold" id="btnEmailSave">Salvar configuração</button>
         <button class="btn ghost" id="btnEmailTest" title="Envia um e-mail de teste para a caixa de suporte">Enviar e-mail de teste</button>
-        <button class="btn ghost" id="btnEmailClearKey" title="Remove a chave salva (volta a valer a variável de ambiente)">Limpar chave</button>
+        <button class="btn ghost" id="btnEmailClearKey" title="Remove o segredo salvo (chave do Resend ou senha SMTP)">Limpar segredo</button>
       </div>
     </div>
 
