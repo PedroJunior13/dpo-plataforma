@@ -28,11 +28,16 @@ export default async function handler() {
     const daysToEnd = Math.ceil((end - now) / 864e5);
     const overdueDays = Math.floor((now - end) / 864e5);
 
-    // 1) Aviso 3 dias antes
-    if (daysToEnd === 3 && t.status === "active" && t.email) {
+    // 1) Aviso ate 3 dias antes — dispara 1x por periodo (idempotente).
+    //    Antes exigia daysToEnd === 3 EXATO: se o cron pulasse esse dia (deploy/cold
+    //    start) o cliente nunca era avisado. Agora avisa em qualquer dia da janela
+    //    (1..3) e grava o period_end avisado para nao repetir.
+    const alreadyWarned = t.expiring_warned_for && new Date(t.expiring_warned_for).getTime() === end;
+    if (daysToEnd >= 1 && daysToEnd <= 3 && t.status === "active" && t.email && !alreadyWarned) {
       await sendEmail({ tenantId: t.id, to: t.email, type: "expiring",
-        subject: "Sua assinatura vence em 3 dias — DPO PJ Protection",
+        subject: `Sua assinatura vence em ${daysToEnd} dia(s) — DPO PJ Protection`,
         html: `<p>Sua assinatura vence em <b>${new Date(end).toLocaleDateString("pt-BR")}</b>. ${t.billing_type === "recurring" ? "A renovacao e automatica." : "Renove para manter o acesso."}</p>` });
+      try { await sql`UPDATE tenants SET expiring_warned_for=${t.current_period_end} WHERE id=${t.id}`; } catch (e) { console.error("[cron-billing] marca aviso (nao-fatal):", e?.message || e); }
       warned++;
     }
 
@@ -66,20 +71,35 @@ export default async function handler() {
   //     (checkAccess) ja barra no login; aqui refletimos o bloqueio tambem no
   //     status do tenant/licenca para a gestao no painel e os alertas por e-mail.
   let warnedAvu = 0, blockedAvu = 0;
-  const avu = await sql`
-    SELECT l.id AS lic_id, l.valid_until, t.id AS tenant_id, t.name, t.email, t.status
-    FROM licenses l JOIN tenants t ON t.id = l.tenant_id
-    WHERE t.is_owner = FALSE AND COALESCE(t.is_demo,FALSE) = FALSE
-      AND l.status = 'active' AND l.valid_until IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.current_period_end IS NOT NULL)`;
+  // Query tolerante: se a coluna expiring_warned_for ainda nao migrou, cai no
+  // fallback sem ela (o aviso pode repetir ate a migracao aplicar — sem quebrar o cron).
+  let avu;
+  try {
+    avu = await sql`
+      SELECT l.id AS lic_id, l.valid_until, l.expiring_warned_for, t.id AS tenant_id, t.name, t.email, t.status
+      FROM licenses l JOIN tenants t ON t.id = l.tenant_id
+      WHERE t.is_owner = FALSE AND COALESCE(t.is_demo,FALSE) = FALSE
+        AND l.status = 'active' AND l.valid_until IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.current_period_end IS NOT NULL)`;
+  } catch (e) {
+    console.error("[cron-billing] avu com coluna nova falhou, usando fallback:", e?.message || e);
+    avu = await sql`
+      SELECT l.id AS lic_id, l.valid_until, NULL AS expiring_warned_for, t.id AS tenant_id, t.name, t.email, t.status
+      FROM licenses l JOIN tenants t ON t.id = l.tenant_id
+      WHERE t.is_owner = FALSE AND COALESCE(t.is_demo,FALSE) = FALSE
+        AND l.status = 'active' AND l.valid_until IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.current_period_end IS NOT NULL)`;
+  }
   for (const l of avu) {
     const end = new Date(l.valid_until).getTime();
     const daysToEnd = Math.ceil((end - now) / 864e5);
     const overdueDays = Math.floor((now - end) / 864e5);
-    if (daysToEnd === 3 && l.status === "active" && l.email) {
+    const licWarned = l.expiring_warned_for && new Date(l.expiring_warned_for).getTime() === end;
+    if (daysToEnd >= 1 && daysToEnd <= 3 && l.status === "active" && l.email && !licWarned) {
       await sendEmail({ tenantId: l.tenant_id, to: l.email, type: "expiring",
-        subject: "Sua licenca vence em 3 dias — DPO PJ Protection",
+        subject: `Sua licenca vence em ${daysToEnd} dia(s) — DPO PJ Protection`,
         html: `<p>Sua licenca vence em <b>${new Date(end).toLocaleDateString("pt-BR")}</b>. Renove para manter o acesso.</p>` });
+      try { await sql`UPDATE licenses SET expiring_warned_for=${l.valid_until} WHERE id=${l.lic_id}`; } catch (e) { console.error("[cron-billing] marca aviso licenca (nao-fatal):", e?.message || e); }
       warnedAvu++;
     }
     if (overdueDays >= GRACE_DAYS && ["active", "grace"].includes(l.status)) {

@@ -492,6 +492,15 @@ async function ownerRoutes(req, user, seg, method) {
 
   if (r === "dashboard" && method === "GET") return ownerDashboard();
 
+  // Resumo semanal do negocio — envio SOB DEMANDA (o mesmo do agendador de segunda).
+  // Permite ao dono testar o e-mail e receber o retrato do negocio na hora.
+  if (r === "digest" && method === "POST") {
+    const mod = await import("./cron-digest.js");
+    const res = await mod.runDigest({ to: SUPPORT_INBOX() });
+    await audit({ actorEmail: user.email, action: "digest_sent", detail: { to: res.to, status: res.email?.status } });
+    return ok({ sent: true, to: res.to, status: res.email?.status });
+  }
+
   if (r === "plans" && method === "GET")
     return ok({ plans: await sql`SELECT * FROM plans ORDER BY tier` });
 
@@ -1245,7 +1254,11 @@ const TICKET_CATEGORIES = [
 ];
 // SLA de 1a resposta (horas) por prioridade.
 const TICKET_SLA_HOURS = { urgente: 4, alta: 8, normal: 24, baixa: 48 };
-const SUPPORT_INBOX = () => process.env.SUPPORT_EMAIL || process.env.OWNER_EMAIL || null;
+// Caixa que recebe TODO chamado aberto na plataforma (consultor/assinante E cliente
+// empresa). Precedencia: SUPPORT_EMAIL > OWNER_EMAIL > fallback fixo do dono. O
+// fallback garante que, mesmo sem variavel de ambiente configurada no Netlify, todo
+// chamado chegue na sua caixa — nunca fica sem destinatario.
+const SUPPORT_INBOX = () => process.env.SUPPORT_EMAIL || process.env.OWNER_EMAIL || "pedrobj@gmail.com";
 
 function ticketCategoryLabel(id) {
   const c = TICKET_CATEGORIES.find(x => x.id === id);
@@ -1718,11 +1731,20 @@ async function ownerDashboard() {
   const nfseStatus = await safe(nfse.status(), { enabled: false, auto: false, missing: ["token", "cnpj", "im", "municipio"] });
   const missLabel = { token: "Token Focus NFe", cnpj: "CNPJ do emitente", im: "Inscricao Municipal", municipio: "Codigo do Municipio (IBGE)" };
   const nfseMissing = (nfseStatus.missing || []).map((k) => missLabel[k] || k);
+  // Status do e-mail transacional (Resend). Sem chave configurada, a plataforma
+  // NAO envia e-mails (ativacao, cobranca, avisos de chamado). O painel mostra
+  // um aviso para o dono saber na hora.
+  const emailConfigured = !!process.env.RESEND_API_KEY;
   return ok({
     totals, mrrCents: mrr.cents, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
     nfseEnabled: nfseStatus.enabled, nfseAuto: nfseStatus.auto, nfseMissing, nfseStatus,
     gateways: billing.availableGateways(),
+    email: {
+      configured: emailConfigured,
+      inbox: SUPPORT_INBOX(),
+      from: process.env.NOTIFY_FROM_EMAIL || "contato@dpopjprotection.com.br",
+    },
   });
 }
 

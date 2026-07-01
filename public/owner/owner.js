@@ -219,9 +219,37 @@
         nfseLine = `<span class="tag pending">não configurada</span>` +
           (miss.length ? `<div class="small muted" style="margin-top:4px">Falta definir: ${miss.map(esc).join(", ")}</div>` : "");
       }
+      // E-mail transacional (Resend)
+      const em = d.email || {};
+      const emailLine = em.configured
+        ? `<span class="tag active">configurado</span> <span class="small muted">envia de ${esc(em.from || "")}</span>`
+        : `<span class="tag pending">não configurado</span><div class="small muted" style="margin-top:4px">Defina <b>RESEND_API_KEY</b> nas variáveis do Netlify para enviar e-mails.</div>`;
       $("#integ").innerHTML =
         `<div>Pagamento: ${gws.length ? gws.map((g) => `<span class="tag active" style="text-transform:capitalize">${esc(g)}</span>`).join(" ") : '<span class="tag grace">manual (sem gateway)</span>'}</div>` +
-        `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>`;
+        `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>` +
+        `<div style="margin-top:8px">E-mail: ${emailLine}</div>`;
+
+      // Aviso destacado quando o e-mail NÃO está configurado (para o dono saber na hora).
+      const ewBox = $("#emailWarn");
+      if (ewBox) {
+        if (em.configured) {
+          ewBox.innerHTML = "";
+        } else {
+          ewBox.innerHTML =
+            `<div class="card" style="margin-bottom:14px;border:1px solid #f0b232;background:rgba(240,178,50,.10)">
+              <div class="flex" style="gap:10px;align-items:flex-start">
+                <span style="font-size:22px;line-height:1">⚠️</span>
+                <div>
+                  <b style="color:#f0b232">E-mail transacional não configurado</b>
+                  <p class="small muted" style="margin:4px 0 0">
+                    A plataforma <b>não está enviando e-mails</b> (link de ativação de licença, avisos de cobrança e notificações de chamados${em.inbox ? ` para <b>${esc(em.inbox)}</b>` : ""}).
+                    Configure a variável <b>RESEND_API_KEY</b> (e o domínio verificado no Resend) nas variáveis de ambiente do Netlify para reativar os envios.
+                  </p>
+                </div>
+              </div>
+            </div>`;
+        }
+      }
 
       // Vencimentos
       const ov = d.overdue || [];
@@ -278,6 +306,16 @@
   }
   $("#btnDemo").addEventListener("click", openDemo);
   $("#btnDemoGen").addEventListener("click", generateDemo);
+
+  // Enviar resumo do negócio agora (mesmo e-mail do agendador semanal).
+  { const bd = $("#btnDigest"); if (bd) bd.addEventListener("click", async () => {
+    bd.disabled = true; const old = bd.textContent; bd.textContent = "Enviando…";
+    try {
+      const r = await api("/owner/digest", { method: "POST", body: "{}" });
+      if (r.status === "sent") toast("Resumo enviado para " + (r.to || "seu e-mail") + ".");
+      else toast("Resumo gerado, mas o e-mail não saiu (configure RESEND_API_KEY no Netlify).");
+    } catch (e) { toast(e.message); } finally { bd.disabled = false; bd.textContent = old; }
+  }); }
 
   // ===================================================================
   //  EMITIR LICENÇA

@@ -53,6 +53,11 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_demo         BOOLEAN NOT NULL DE
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS demo_token      TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS demo_expires_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_tenants_demo ON tenants(is_demo) WHERE is_demo;
+-- Controle de aviso de vencimento (robo diario): guarda o current_period_end para o
+-- qual JA avisamos "vence em breve". Torna o aviso idempotente por periodo — dispara
+-- exatamente 1x por vencimento, mesmo se o cron rodar 0x ou 2x num dia (antes o aviso
+-- so saia quando faltavam EXATAMENTE 3 dias; se o cron pulasse o dia, nunca avisava).
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS expiring_warned_for TIMESTAMPTZ;
 
 -- =====================================================================
 --  3) USUARIOS (login). Pertencem a um tenant. OWNER = super-admin global.
@@ -138,6 +143,9 @@ ALTER TABLE licenses ADD COLUMN IF NOT EXISTS billing_cycle TEXT;
 -- dono. Informativo/gestao (registro do que foi cobrado/combinado); a cota custom e
 -- aplicada via tenants.client_quota_override (trava real do limite de clientes).
 ALTER TABLE licenses ADD COLUMN IF NOT EXISTS custom_price_cents INT;
+-- Idempotencia do aviso de vencimento de licenca AVULSA (robo diario): guarda o
+-- valid_until ja avisado, para disparar o aviso "vence em breve" 1x por periodo.
+ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expiring_warned_for TIMESTAMPTZ;
 
 -- =====================================================================
 --  6) AUDITORIA DE LICENCAS (append-only, imutavel, versionado)
