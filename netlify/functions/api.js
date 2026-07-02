@@ -492,6 +492,11 @@ async function ownerRoutes(req, user, seg, method) {
 
   if (r === "dashboard" && method === "GET") return ownerDashboard();
 
+  // Central de notificacoes: avisos calculados a partir do estado real das
+  // licencas/assinaturas (vencimentos, atrasos, ativacao pendente, cobranca,
+  // clientes acima da cota). Nao depende de e-mail — tudo dentro do painel.
+  if (r === "notifications" && method === "GET") return ok(await computeNotifications());
+
   // Resumo semanal do negocio — envio SOB DEMANDA (o mesmo do agendador de segunda).
   // Permite ao dono testar o e-mail e receber o retrato do negocio na hora.
   if (r === "digest" && method === "POST") {
@@ -768,51 +773,7 @@ async function ownerRoutes(req, user, seg, method) {
   // ---- INTEGRACOES (configuracao da NFS-e e demais parametros) ----
   // GET: estado atual (token mascarado) + diagnostico do que falta.
   if (r === "integrations" && method === "GET") {
-    const ecfg = await emailConfig();
-    return ok({ nfse: await nfse.status(), email: emailPublic(ecfg) });
-  }
-  // POST: salva a config do e-mail transacional — precedencia sobre env. Suporta
-  // dois provedores: "resend" (chave de API) e "smtp" (caixa que o Dono ja possui).
-  // Segredos (chave/senha) so sao sobrescritos quando enviados nao-vazios e nao
-  // mascarados (evita apagar por engano ao regravar os demais campos).
-  if (seg[1] === "integrations" && seg[2] === "email" && seg[3] == null && method === "POST") {
-    const b = await readJson(req).catch(() => ({}));
-    const patch = {};
-    if (typeof b.provider === "string" && ["resend", "smtp"].includes(b.provider.trim().toLowerCase())) patch.EMAIL_PROVIDER = b.provider.trim().toLowerCase();
-    if (typeof b.fromName === "string") patch.NOTIFY_FROM_NAME = b.fromName.trim();
-    if (typeof b.fromEmail === "string") patch.NOTIFY_FROM_EMAIL = b.fromEmail.trim();
-    if (typeof b.apiKey === "string") {
-      const k = b.apiKey.trim();
-      if (k && !/^[•*]/.test(k)) patch.RESEND_API_KEY = k; // ignora valor mascarado
-      else if (b.clearKey === true) patch.RESEND_API_KEY = "";
-    }
-    // Campos SMTP.
-    if (typeof b.smtpHost === "string") patch.SMTP_HOST = b.smtpHost.trim();
-    if (typeof b.smtpPort === "string" || typeof b.smtpPort === "number") patch.SMTP_PORT = String(b.smtpPort).trim();
-    if (typeof b.smtpSecure !== "undefined") patch.SMTP_SECURE = (b.smtpSecure === true || b.smtpSecure === "true" || b.smtpSecure === 1) ? "true" : "false";
-    if (typeof b.smtpUser === "string") patch.SMTP_USER = b.smtpUser.trim();
-    if (typeof b.smtpPass === "string") {
-      const p = b.smtpPass; // senha de app pode conter espacos — nao damos trim
-      if (p && !/^[•*]/.test(p)) patch.SMTP_PASS = p;
-      else if (b.clearSmtpPass === true) patch.SMTP_PASS = "";
-    }
-    await setSettings(patch, user.email);
-    await audit({ actorEmail: user.email, action: "integrations_email_updated", entity: "settings",
-      detail: { keys: Object.keys(patch) }, ip: clientIp(req) });
-    return ok({ email: emailPublic(await emailConfig()) });
-  }
-  // POST .../test: envia um e-mail de teste para a caixa de suporte do Dono.
-  if (seg[1] === "integrations" && seg[2] === "email" && seg[3] === "test" && method === "POST") {
-    const ecfg = await emailConfig();
-    if (!ecfg.configured) return fail(ecfg.provider === "smtp"
-      ? "Preencha servidor SMTP, usuário e senha para ativar os envios."
-      : "Informe a chave da API do Resend para ativar os envios.", 400);
-    const to = SUPPORT_INBOX();
-    const res = await sendEmail({ to, type: "test",
-      subject: "Teste de e-mail — DPO PJ Protection",
-      html: `<p>Este é um e-mail de teste da plataforma <b>DPO PJ Protection</b>.</p><p>Se você recebeu esta mensagem, o envio transacional está funcionando corretamente (provedor: <b>${ecfg.provider === "smtp" ? "SMTP" : "Resend"}</b>).</p>` });
-    if (res.status === "sent") return ok({ sent: true, to, message: `E-mail de teste enviado para ${to}. Confira a caixa de entrada (e a pasta de spam).` });
-    return fail(`Falha ao enviar (${res.status}). ${res.err ? "Detalhe: " + String(res.err).slice(0, 220) : (ecfg.provider === "smtp" ? "Verifique servidor, porta, usuário e senha." : "Verifique a chave e o domínio verificado no Resend.")}`, 400);
+    return ok({ nfse: await nfse.status() });
   }
   // POST: salva os parametros de emissao da NFS-e (precedencia sobre env).
   // O token so e sobrescrito quando enviado nao-vazio (evita apagar por engano).
@@ -1400,28 +1361,6 @@ function stripMsgAttachment(m) {
   return { ...m, attachment_data: undefined, has_attachment: !!m.attachment_name };
 }
 function httpError(msg, status) { const e = new Error(msg); e.httpStatus = status; return e; }
-// Escape para conteudo em HTML de e-mail (evita injecao no corpo da mensagem).
-// Monta a visao PUBLICA da config de e-mail para o painel: nunca expoe segredos
-// (chave do Resend / senha SMTP), apenas mascaras indicando se existem.
-function emailPublic(ecfg) {
-  return {
-    provider: ecfg.provider,
-    configured: ecfg.configured,
-    resendOk: ecfg.resendOk,
-    smtpOk: ecfg.smtpOk,
-    keyMasked: ecfg.resendOk ? "••••••••" + String(ecfg.key).slice(-4) : "",
-    fromName: ecfg.fromName,
-    fromEmail: ecfg.fromEmail,
-    inbox: SUPPORT_INBOX(),
-    smtp: {
-      host: ecfg.smtp.host,
-      port: ecfg.smtp.port,
-      secure: ecfg.smtp.secure,
-      user: ecfg.smtp.user,
-      passMasked: ecfg.smtp.pass ? "••••••••" : "",
-    },
-  };
-}
 
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -1834,23 +1773,37 @@ async function ownerDashboard() {
   // "Assinantes" = consultorias reais (com licenca emitida), excluindo o ambiente
   // do dono e ambientes de demonstracao. "ativos" = as que tem licenca ATIVA — assim
   // 1 licenca ativa => 1 assinante ativo (antes contava tenants demo/sem licenca).
+  // TODOS os indicadores compartilham a MESMA populacao: consultorias reais
+  // (is_owner=FALSE e is_demo=FALSE). Assim os 4 blocos SEMPRE reconciliam entre
+  // si — "Assinantes", "Licencas ativas" e "Clientes na operacao" olham para o
+  // mesmo universo. Contar clientes/licencas do ambiente demo (que vem semeado
+  // com clientes de exemplo) inflava o painel e nao "batia" com os assinantes.
   const totals = await safe(one(sql`SELECT
     (SELECT count(*)::int FROM tenants t WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
         AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS tenants,
     (SELECT count(*)::int FROM tenants t WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
         AND t.status='active' AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id AND l.status='active')) AS active,
-    (SELECT count(*)::int FROM tenants WHERE status IN ('suspended','blocked')) AS blocked,
-    (SELECT count(*)::int FROM licenses WHERE status='active') AS active_licenses,
-    (SELECT count(*)::int FROM licenses WHERE status='issued') AS pending_activation,
-    (SELECT count(*)::int FROM clients c JOIN tenants t ON t.id=c.tenant_id WHERE t.is_owner=FALSE) AS clients_managed,
+    (SELECT count(*)::int FROM tenants t WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+        AND t.status IN ('suspended','blocked')) AS blocked,
+    (SELECT count(*)::int FROM licenses l JOIN tenants t ON t.id=l.tenant_id
+        WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE AND l.status='active') AS active_licenses,
+    (SELECT count(*)::int FROM licenses l JOIN tenants t ON t.id=l.tenant_id
+        WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE AND l.status='issued') AS pending_activation,
+    (SELECT count(*)::int FROM clients c JOIN tenants t ON t.id=c.tenant_id
+        WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+          AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS clients_managed,
     (SELECT count(*)::int FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id
-       WHERE t.is_owner=FALSE AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS pending_purchases`),
+       WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+         AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)) AS pending_purchases`),
     { tenants: 0, active: 0, blocked: 0, active_licenses: 0, pending_activation: 0, clients_managed: 0, pending_purchases: 0 });
-  const mrr = await safe(one(sql`SELECT coalesce(sum(amount_cents),0)::int AS cents FROM subscriptions WHERE status='active'`), { cents: 0 });
+  // Receita recorrente (MRR): apenas assinaturas ativas de consultorias reais.
+  const mrr = await safe(one(sql`SELECT coalesce(sum(s.amount_cents),0)::int AS cents
+    FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id
+    WHERE s.status='active' AND t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE`), { cents: 0 });
   const overdue = await safe(sql`
     SELECT t.id, t.name, t.email, t.phone, t.status, s.current_period_end, s.billing_type, p.name AS plan_name
     FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
-    WHERE t.is_owner=FALSE AND s.current_period_end IS NOT NULL
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE AND s.current_period_end IS NOT NULL
       AND s.current_period_end < now() + interval '7 days'
     ORDER BY s.current_period_end ASC LIMIT 50`, []);
   // Distribuicao por modulo + receita ativa por modulo (area negocial).
@@ -1858,7 +1811,9 @@ async function ownerDashboard() {
       coalesce(sum(CASE WHEN sub.status='active' THEN sub.amount_cents ELSE 0 END),0)::int AS revenue
     FROM tenants t LEFT JOIN plans p ON p.id=t.plan_id
     LEFT JOIN LATERAL (SELECT amount_cents, status FROM subscriptions s WHERE s.tenant_id=t.id ORDER BY created_at DESC LIMIT 1) sub ON TRUE
-    WHERE t.is_owner=FALSE GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`, []);
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+      AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)
+    GROUP BY t.plan_id, p.name, p.tier ORDER BY p.tier`, []);
   // Receita de clientes adicionais (overage): para cada consultoria com licenca
   // paga e ativa, soma (clientes acima da cota) x per_client_cents. Transparente
   // para o dono: quanto a mais entra por clientes cadastrados alem da cota do modulo.
@@ -1879,7 +1834,10 @@ async function ownerDashboard() {
       AND COALESCE(t.client_quota_override, lic.client_quota, p.client_quota) IS NOT NULL`),
     { cents: 0, extra_clients: 0 });
   // Status das licencas (para grafico de rosca/barras em CSS).
-  const licStatus = await safe(sql`SELECT status, count(*)::int AS n FROM licenses GROUP BY status`, []);
+  const licStatus = await safe(sql`SELECT l.status, count(*)::int AS n
+    FROM licenses l JOIN tenants t ON t.id=l.tenant_id
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+    GROUP BY l.status`, []);
   // Funil do CRM (resumo).
   const crmFunnel = await safe(sql`SELECT stage, count(*)::int AS n, coalesce(sum(value_cents),0)::int AS value FROM crm_contacts GROUP BY stage`, []);
   // Receita aprovada nos ultimos 6 meses (serie para mini-grafico de barras).
@@ -1894,21 +1852,168 @@ async function ownerDashboard() {
   const nfseStatus = await safe(nfse.status(), { enabled: false, auto: false, missing: ["token", "cnpj", "im", "municipio"] });
   const missLabel = { token: "Token Focus NFe", cnpj: "CNPJ do emitente", im: "Inscricao Municipal", municipio: "Codigo do Municipio (IBGE)" };
   const nfseMissing = (nfseStatus.missing || []).map((k) => missLabel[k] || k);
-  // Status do e-mail transacional (Resend). Sem chave configurada, a plataforma
-  // NAO envia e-mails (ativacao, cobranca, avisos de chamado). O painel mostra
-  // um aviso para o dono saber na hora.
-  const ecfg = await safe(emailConfig(), { configured: false, fromEmail: "contato@dpopjprotection.com.br" });
+  // Resumo de notificacoes (mesma logica do endpoint /owner/notifications) para
+  // alimentar o badge/resumo no Painel sem uma segunda chamada.
+  const notif = await safe(computeNotifications(), { counts: { total: 0, danger: 0, warn: 0, info: 0, unresolved: 0 }, alerts: [] });
   return ok({
     totals, mrrCents: mrr.cents, overageCents: overage.cents, overageClients: overage.extra_clients, overdue, byPlan,
     licStatus, crmFunnel, revenue, recent,
     nfseEnabled: nfseStatus.enabled, nfseAuto: nfseStatus.auto, nfseMissing, nfseStatus,
     gateways: billing.availableGateways(),
-    email: {
-      configured: ecfg.configured,
-      inbox: SUPPORT_INBOX(),
-      from: ecfg.fromEmail || "contato@dpopjprotection.com.br",
-    },
+    notif: { counts: notif.counts, top: (notif.alerts || []).slice(0, 4) },
   });
+}
+
+// =====================================================================
+//  CENTRAL DE NOTIFICACOES (dentro do Painel do Dono)
+//  Calcula avisos por licenca/assinatura a partir do estado REAL do banco —
+//  sem depender de e-mail. Cada aviso tem um id ESTAVEL (mesma situacao =
+//  mesmo id) para o front controlar "lido/nao lido" via localStorage.
+//  Categorias/severidades:
+//    - overdue        (danger) — assinatura vencida ha >0 dias
+//    - expiring       (warn)   — vence nos proximos 7 dias
+//    - lic_expiring   (warn)   — licenca (valid_until) vence nos proximos 7 dias
+//    - lic_expired    (danger) — licenca vencida (valid_until no passado)
+//    - pending_activation (info) — licenca emitida e ainda nao ativada
+//    - suspended      (warn)   — consultoria suspensa/bloqueada
+//    - pending_purchase (info) — assinatura sem licenca emitida
+//    - overage        (info)   — clientes acima da cota (cobranca adicional)
+// =====================================================================
+async function computeNotifications() {
+  const alerts = [];
+  const DAY = 86400000;
+  const now = Date.now();
+  const dleft = (d) => d ? Math.ceil((new Date(d).getTime() - now) / DAY) : null;
+  const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("pt-BR"); } catch { return ""; } };
+  const brl = (c) => "R$ " + (Number(c || 0) / 100).toFixed(2).replace(".", ",");
+
+  // 1) Assinaturas: vencimento (overdue / expiring em 7 dias).
+  const subs = await safe(sql`
+    SELECT t.id AS tenant_id, t.name AS tenant_name, t.status AS tenant_status,
+           s.current_period_end, s.billing_type, s.amount_cents, p.name AS plan_name
+    FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+      AND s.current_period_end IS NOT NULL
+      AND s.current_period_end < now() + interval '7 days'
+      -- So alerta de vencimento para quem tem uma licenca (relacao ativa). Assinatura
+      -- SEM licenca ja e sinalizada separadamente como "compra sem licenca" (info),
+      -- evitando duplo-aviso e cobranca indevida sobre tenant sem licenca emitida.
+      AND EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)
+    ORDER BY s.current_period_end ASC LIMIT 100`, []);
+  for (const s of subs) {
+    const dl = dleft(s.current_period_end);
+    const base = { tenantId: s.tenant_id, tenantName: s.tenant_name, planName: s.plan_name || "—",
+                   licenseId: null, licenseKey: null, date: s.current_period_end, daysLeft: dl,
+                   amountCents: s.amount_cents || 0 };
+    if (dl != null && dl < 0) {
+      alerts.push({ ...base, id: `overdue:${s.tenant_id}:${s.current_period_end}`, category: "overdue", severity: "danger",
+        title: `Assinatura vencida — ${s.tenant_name}`,
+        detail: `Venceu em ${fmtDate(s.current_period_end)} (${Math.abs(dl)} dia(s) em atraso). Valor ${brl(s.amount_cents)}.` });
+    } else {
+      alerts.push({ ...base, id: `expiring:${s.tenant_id}:${s.current_period_end}`, category: "expiring", severity: "warn",
+        title: `Vence em ${dl} dia(s) — ${s.tenant_name}`,
+        detail: `Vencimento em ${fmtDate(s.current_period_end)}. Valor ${brl(s.amount_cents)}.` });
+    }
+  }
+
+  // 2) Licencas: valid_until vencido/proximo + ativacao pendente.
+  const lics = await safe(sql`
+    SELECT l.id, l.license_key, l.license_no, l.status, l.valid_until,
+           t.id AS tenant_id, t.name AS tenant_name, p.name AS plan_name
+    FROM licenses l JOIN tenants t ON t.id=l.tenant_id LEFT JOIN plans p ON p.id=l.plan_id
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+      AND l.status IN ('active','issued','suspended')
+    ORDER BY l.valid_until ASC NULLS LAST LIMIT 200`, []);
+  for (const l of lics) {
+    const base = { tenantId: l.tenant_id, tenantName: l.tenant_name, planName: l.plan_name || "—",
+                   licenseId: l.id, licenseKey: l.license_key, date: l.valid_until, daysLeft: dleft(l.valid_until) };
+    if (l.status === "issued") {
+      alerts.push({ ...base, id: `pending_activation:${l.id}`, category: "pending_activation", severity: "info",
+        title: `Licença aguardando ativação — ${l.tenant_name}`,
+        detail: `A licença ${l.license_key || ("#" + l.license_no)} foi emitida e ainda não foi ativada pelo cliente.` });
+    }
+    if (l.status === "suspended") {
+      alerts.push({ ...base, id: `lic_suspended:${l.id}`, category: "suspended", severity: "warn",
+        title: `Licença suspensa — ${l.tenant_name}`,
+        detail: `A licença ${l.license_key || ("#" + l.license_no)} está suspensa.` });
+    }
+    if (l.status === "active" && l.valid_until) {
+      const dl = dleft(l.valid_until);
+      if (dl != null && dl < 0) {
+        alerts.push({ ...base, id: `lic_expired:${l.id}:${l.valid_until}`, category: "lic_expired", severity: "danger",
+          title: `Licença vencida — ${l.tenant_name}`,
+          detail: `Validade encerrada em ${fmtDate(l.valid_until)} (${Math.abs(dl)} dia(s)).` });
+      } else if (dl != null && dl <= 7) {
+        alerts.push({ ...base, id: `lic_expiring:${l.id}:${l.valid_until}`, category: "lic_expiring", severity: "warn",
+          title: `Licença vence em ${dl} dia(s) — ${l.tenant_name}`,
+          detail: `Validade até ${fmtDate(l.valid_until)}.` });
+      }
+    }
+  }
+
+  // 3) Consultorias suspensas/bloqueadas (status do tenant).
+  const blocked = await safe(sql`
+    SELECT id, name, status FROM tenants
+    WHERE is_owner=FALSE AND COALESCE(is_demo,FALSE)=FALSE AND status IN ('suspended','blocked')
+    LIMIT 100`, []);
+  for (const t of blocked) {
+    alerts.push({ id: `tenant_${t.status}:${t.id}`, category: "suspended", severity: "warn",
+      tenantId: t.id, tenantName: t.name, planName: "—", licenseId: null, licenseKey: null, date: null, daysLeft: null,
+      title: `Consultoria ${t.status === "blocked" ? "bloqueada" : "suspensa"} — ${t.name}`,
+      detail: `A consultoria está com status "${t.status}". Verifique pagamentos e reative se necessário.` });
+  }
+
+  // 4) Assinaturas sem licenca emitida (compra pendente de emissao).
+  const pending = await safe(sql`
+    SELECT t.id, t.name, s.plan_id, p.name AS plan_name
+    FROM subscriptions s JOIN tenants t ON t.id=s.tenant_id LEFT JOIN plans p ON p.id=s.plan_id
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE
+      AND NOT EXISTS (SELECT 1 FROM licenses l WHERE l.tenant_id=t.id)
+    LIMIT 100`, []);
+  for (const t of pending) {
+    alerts.push({ id: `pending_purchase:${t.id}`, category: "pending_purchase", severity: "info",
+      tenantId: t.id, tenantName: t.name, planName: t.plan_name || "—", licenseId: null, licenseKey: null, date: null, daysLeft: null,
+      title: `Compra sem licença — ${t.name}`,
+      detail: `Há uma assinatura para "${t.name}" sem licença emitida. Emita a licença em Licenças.` });
+  }
+
+  // 5) Clientes acima da cota (cobranca adicional em aberto/transparencia).
+  const over = await safe(sql`
+    WITH lic AS (
+      SELECT DISTINCT ON (l.tenant_id) l.tenant_id, l.plan_id, l.client_quota, l.pricing
+      FROM licenses l WHERE l.status='active' ORDER BY l.tenant_id, l.created_at DESC
+    )
+    SELECT t.id AS tenant_id, t.name AS tenant_name, p.name AS plan_name,
+      cc.n AS clients,
+      COALESCE(t.client_quota_override, lic.client_quota, p.client_quota) AS quota,
+      GREATEST(0, cc.n - COALESCE(t.client_quota_override, lic.client_quota, p.client_quota, 0)) AS extra,
+      GREATEST(0, cc.n - COALESCE(t.client_quota_override, lic.client_quota, p.client_quota, 0)) * COALESCE(p.per_client_cents,5000) AS extra_cents
+    FROM lic JOIN tenants t ON t.id=lic.tenant_id LEFT JOIN plans p ON p.id=lic.plan_id
+    JOIN LATERAL (SELECT count(*)::int AS n FROM clients c WHERE c.tenant_id=lic.tenant_id) cc ON TRUE
+    WHERE t.is_owner=FALSE AND COALESCE(t.is_demo,FALSE)=FALSE AND COALESCE(lic.pricing,'paid')<>'free'
+      AND COALESCE(t.client_quota_override, lic.client_quota, p.client_quota) IS NOT NULL
+      AND cc.n > COALESCE(t.client_quota_override, lic.client_quota, p.client_quota, 0)
+    LIMIT 100`, []);
+  for (const o of over) {
+    alerts.push({ id: `overage:${o.tenant_id}:${o.extra}`, category: "overage", severity: "info",
+      tenantId: o.tenant_id, tenantName: o.tenant_name, planName: o.plan_name || "—", licenseId: null, licenseKey: null,
+      date: null, daysLeft: null, amountCents: o.extra_cents,
+      title: `${o.extra} cliente(s) acima da cota — ${o.tenant_name}`,
+      detail: `${o.clients} clientes cadastrados (cota ${o.quota}). Adicional de ${brl(o.extra_cents)}/mês no faturamento.` });
+  }
+
+  // Ordena por severidade (danger > warn > info) e depois por data mais proxima.
+  const rank = { danger: 0, warn: 1, info: 2 };
+  alerts.sort((a, b) => (rank[a.severity] - rank[b.severity]) ||
+    ((a.daysLeft ?? 9999) - (b.daysLeft ?? 9999)));
+
+  const counts = {
+    total: alerts.length,
+    danger: alerts.filter((a) => a.severity === "danger").length,
+    warn: alerts.filter((a) => a.severity === "warn").length,
+    info: alerts.filter((a) => a.severity === "info").length,
+  };
+  return { alerts, counts, generatedAt: new Date().toISOString() };
 }
 
 // =====================================================================

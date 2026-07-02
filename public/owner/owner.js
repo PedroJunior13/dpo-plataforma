@@ -416,6 +416,8 @@
       const r = await api("/owner/licenses", { method: "POST", body: JSON.stringify(body) });
       showEmitResult(r);
       toast("Licença emitida!");
+      // Reconcilia os numeros do painel imediatamente apos a emissao.
+      loadDashboard().catch(() => {}); loadLicenses().catch(() => {}); refreshNotifBadge();
     } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = "Gerar licença e link"; }
   });
   function showEmitResult(r) {
@@ -513,6 +515,8 @@
       showEmitResult(r);
       toast("Licença gerada no perfil do cliente!");
       loadPurchases();
+      // Reconcilia KPIs do Dashboard e badge apos gerar a licenca da compra.
+      loadDashboard().catch(() => {}); refreshNotifBadge();
     } catch (err) { toast(err.message); issue.disabled = false; issue.textContent = "Gerar licença"; }
   });
 
@@ -660,7 +664,17 @@
     openModal("modalManage");
 
     const out = (html) => { $("#mb_out").innerHTML = html; };
-    const refresh = () => { closeModal("modalManage"); loadLicenses(); };
+    // Toda mutacao (emitir/suspender/reativar/revogar/excluir licenca, cota,
+    // acesso, exclusao do cliente) precisa reconciliar os NUMEROS do painel:
+    // recarrega a lista de licencas, os KPIs do Dashboard e o badge de
+    // notificacoes — assim "Assinantes / Licencas ativas / Clientes na operacao"
+    // refletem a mudanca imediatamente, sem depender de navegar de novo.
+    const refresh = () => {
+      closeModal("modalManage");
+      loadLicenses();
+      loadDashboard().catch(() => {});
+      refreshNotifBadge();
+    };
 
     $("#mb_boleto").onclick = async () => {
       const bout = (h) => { $("#mb_boleto_out").innerHTML = h; };

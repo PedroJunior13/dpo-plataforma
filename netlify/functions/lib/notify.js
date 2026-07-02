@@ -1,149 +1,26 @@
-// Notificacoes: e-mail (Resend OU SMTP) e WhatsApp (Meta Cloud API).
+// Notificacoes: e-mail (Resend, best-effort) e WhatsApp (Meta Cloud API).
 // Toda notificacao e registrada em `notifications` para auditoria.
+//
+// IMPORTANTE: a plataforma NAO expoe mais configuracao de e-mail transacional no
+// painel. As notificacoes operacionais (vencimentos, pendencias, status de
+// licenca) vivem DENTRO do Painel do Dono (central de Notificacoes). O e-mail
+// continua disponivel apenas como canal BEST-EFFORT: se a env RESEND_API_KEY
+// estiver definida no servidor, os avisos transacionais sao enviados; caso
+// contrario o envio e apenas registrado como "queued" e nada quebra.
 import { sql } from "./db.js";
 import { getSetting } from "./settings.js";
-import net from "node:net";
-import tls from "node:tls";
 
-// Config do e-mail transacional com PRECEDENCIA do painel (Integracoes) sobre a
-// env. Dois provedores possiveis:
-//   - "resend": API HTTP do Resend (requer conta + dominio verificado).
-//   - "smtp":   qualquer caixa de e-mail que o Dono JA tenha (Gmail com senha de
-//               app, e-mail do proprio dominio, etc.) — dispensa criar conta nova
-//               de servico transacional e verificar dominio em terceiros.
-// Se nada estiver configurado, o envio e apenas registrado como "queued" (sem
-// quebrar o fluxo principal — abrir chamado/gerar licenca nunca falha por e-mail).
+// Config do e-mail via Resend, lida da env (com precedencia de painel caso a
+// chave ainda exista em platform_settings). Sem chave => configured=false e o
+// envio degrada para "queued" sem afetar a operacao principal.
 export async function emailConfig() {
-  const [key, fromName, fromEmail, provider, host, port, secure, user, pass] = await Promise.all([
+  const [key, fromName, fromEmail] = await Promise.all([
     getSetting("RESEND_API_KEY", "RESEND_API_KEY", ""),
     getSetting("NOTIFY_FROM_NAME", "NOTIFY_FROM_NAME", "DPO PJ Protection"),
     getSetting("NOTIFY_FROM_EMAIL", "NOTIFY_FROM_EMAIL", "contato@dpopjprotection.com.br"),
-    getSetting("EMAIL_PROVIDER", "EMAIL_PROVIDER", ""),
-    getSetting("SMTP_HOST", "SMTP_HOST", ""),
-    getSetting("SMTP_PORT", "SMTP_PORT", ""),
-    getSetting("SMTP_SECURE", "SMTP_SECURE", ""),
-    getSetting("SMTP_USER", "SMTP_USER", ""),
-    getSetting("SMTP_PASS", "SMTP_PASS", ""),
   ]);
-  const smtp = {
-    host: (host || "").trim(),
-    port: parseInt(port, 10) || 465,
-    // secure=true => TLS implicito (465). false => STARTTLS (587).
-    secure: secure ? /^(1|true|ssl|yes)$/i.test(String(secure).trim()) : (parseInt(port, 10) !== 587),
-    user: (user || "").trim(),
-    pass: pass || "",
-  };
-  // Provedor efetivo: respeita a escolha do painel; se vazio, deduz pelo que estiver
-  // preenchido (SMTP tem prioridade so quando o Resend nao tem chave).
-  let prov = (provider || "").trim().toLowerCase();
   const resendOk = !!(key && key.trim());
-  const smtpOk = !!(smtp.host && smtp.user && smtp.pass);
-  if (prov !== "resend" && prov !== "smtp") prov = resendOk ? "resend" : (smtpOk ? "smtp" : "resend");
-  const configured = prov === "smtp" ? smtpOk : resendOk;
-  return { provider: prov, key: key || "", fromName, fromEmail, smtp, resendOk, smtpOk, configured };
-}
-
-// ---- Cliente SMTP minimo, SEM dependencias (node:net + node:tls) ----
-// Evita adicionar pacotes ao package.json (o Dono faz deploy pelo GitHub web, sem
-// npm local) e nao arrisca quebrar o build. Suporta AUTH LOGIN sobre TLS implicito
-// (465) e STARTTLS (587). Em caso de erro, apenas retorna status "error" — nunca
-// lanca para o chamador (o e-mail e sempre best-effort).
-function b64(s) { return Buffer.from(String(s), "utf8").toString("base64"); }
-function mimeHeader(s) { return /^[\x00-\x7F]*$/.test(s || "") ? (s || "") : `=?UTF-8?B?${b64(s)}?=`; }
-
-async function sendViaSmtp({ smtp, fromName, fromEmail, to, subject, html }) {
-  return new Promise((resolve) => {
-    let socket, buf = "", waiter = null, settled = false;
-    const finish = (status, err) => {
-      if (settled) return; settled = true;
-      clearTimeout(timer);
-      try { socket && socket.destroy(); } catch (_) {}
-      resolve({ status, err: err || null });
-    };
-    const timer = setTimeout(() => finish("error", "smtp timeout"), (FETCH_TIMEOUT_MS + 6000));
-
-    // Extrai uma resposta SMTP completa (ultima linha = "NNN " com espaco apos o codigo).
-    const tryExtract = () => {
-      const lines = buf.split("\r\n");
-      for (let i = 0; i < lines.length; i++) {
-        if (/^\d{3} /.test(lines[i])) {
-          const consumed = lines.slice(0, i + 1).join("\r\n").length + 2;
-          const code = parseInt(lines[i].slice(0, 3), 10);
-          buf = buf.slice(consumed);
-          return code;
-        }
-      }
-      return null;
-    };
-    const onData = (d) => {
-      buf += d.toString("utf8");
-      if (waiter) { const c = tryExtract(); if (c != null) { const w = waiter; waiter = null; w(c); } }
-    };
-    const expect = () => new Promise((res) => {
-      const c = tryExtract(); if (c != null) return res(c);
-      waiter = res;
-    });
-    const send = (line) => socket.write(line + "\r\n");
-
-    const domain = (fromEmail.split("@")[1] || "dpopjprotection.com.br");
-    const buildMessage = () => {
-      const b = Buffer.from(html || "", "utf8").toString("base64").replace(/(.{76})/g, "$1\r\n");
-      return [
-        `From: ${mimeHeader(fromName)} <${fromEmail}>`,
-        `To: ${to}`,
-        `Subject: ${mimeHeader(subject)}`,
-        `Date: ${new Date().toUTCString()}`,
-        `Message-ID: <${Date.now()}.${Math.random().toString(36).slice(2)}@${domain}>`,
-        `MIME-Version: 1.0`,
-        `Content-Type: text/html; charset=UTF-8`,
-        `Content-Transfer-Encoding: base64`,
-        ``, b,
-      ].join("\r\n");
-    };
-
-    const converse = async (afterTls) => {
-      try {
-        let code;
-        if (!afterTls) { code = await expect(); if (code !== 220) return finish("error", "greeting " + code); }
-        send(`EHLO ${domain}`); code = await expect(); if (code !== 250) return finish("error", "ehlo " + code);
-        send(`AUTH LOGIN`); code = await expect(); if (code !== 334) return finish("error", "auth-start " + code);
-        send(b64(smtp.user)); code = await expect(); if (code !== 334) return finish("error", "auth-user " + code);
-        send(b64(smtp.pass)); code = await expect(); if (code !== 235) return finish("error", "auth-fail " + code);
-        send(`MAIL FROM:<${fromEmail}>`); code = await expect(); if (code !== 250) return finish("error", "mailfrom " + code);
-        send(`RCPT TO:<${to}>`); code = await expect(); if (code !== 250 && code !== 251) return finish("error", "rcpt " + code);
-        send(`DATA`); code = await expect(); if (code !== 354) return finish("error", "data " + code);
-        socket.write(buildMessage() + "\r\n.\r\n");
-        code = await expect(); if (code !== 250) return finish("error", "send " + code);
-        send(`QUIT`);
-        finish("sent", null);
-      } catch (e) { finish("error", e?.message || String(e)); }
-    };
-
-    try {
-      if (smtp.secure) {
-        // TLS implicito (porta 465).
-        socket = tls.connect({ host: smtp.host, port: smtp.port, servername: smtp.host }, () => converse(false));
-        socket.on("data", onData);
-        socket.on("error", (e) => finish("error", e.message));
-      } else {
-        // Texto puro + STARTTLS (porta 587).
-        const plain = net.connect({ host: smtp.host, port: smtp.port }, async () => {
-          try {
-            let code = await expect(); if (code !== 220) return finish("error", "greeting " + code);
-            send(`EHLO ${domain}`); code = await expect(); if (code !== 250) return finish("error", "ehlo " + code);
-            send(`STARTTLS`); code = await expect(); if (code !== 220) return finish("error", "starttls " + code);
-            plain.removeListener("data", onData);
-            socket = tls.connect({ socket: plain, host: smtp.host, servername: smtp.host }, () => converse(true));
-            socket.on("data", onData);
-            socket.on("error", (e) => finish("error", e.message));
-          } catch (e) { finish("error", e?.message || String(e)); }
-        });
-        socket = plain;
-        plain.on("data", onData);
-        plain.on("error", (e) => finish("error", e.message));
-      }
-    } catch (e) { finish("error", e?.message || String(e)); }
-  });
+  return { provider: "resend", key: key || "", fromName, fromEmail, resendOk, configured: resendOk };
 }
 
 // Timeout duro para qualquer chamada a provedor externo (Resend/WhatsApp).
@@ -163,23 +40,18 @@ export async function sendEmail({ tenantId = null, to, subject, html, type = "in
   let status = "queued", err = null;
   const cfg = await emailConfig();
   if (cfg.configured && to) {
-    if (cfg.provider === "smtp") {
-      const r = await sendViaSmtp({ smtp: cfg.smtp, fromName: cfg.fromName, fromEmail: cfg.fromEmail, to, subject, html });
-      status = r.status; err = r.err;
-    } else {
-      try {
-        const r = await fetchWithTimeout("https://api.resend.com/emails", {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${cfg.key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: `${cfg.fromName} <${cfg.fromEmail}>`,
-            to: [to], subject, html,
-          }),
-        });
-        status = r.ok ? "sent" : "error";
-        if (!r.ok) err = await r.text();
-      } catch (e) { status = "error"; err = e.name === "AbortError" ? "timeout" : e.message; }
-    }
+    try {
+      const r = await fetchWithTimeout("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${cfg.key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `${cfg.fromName} <${cfg.fromEmail}>`,
+          to: [to], subject, html,
+        }),
+      });
+      status = r.ok ? "sent" : "error";
+      if (!r.ok) err = await r.text();
+    } catch (e) { status = "error"; err = e.name === "AbortError" ? "timeout" : e.message; }
   }
   // O registro de auditoria nunca pode derrubar a operacao que disparou o e-mail.
   try {

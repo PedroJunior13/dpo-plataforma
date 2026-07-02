@@ -56,7 +56,7 @@
 [build.environment]
   NODE_VERSION = "20"
   # Versao da plataforma (controle de versao) — refletida no painel do dono.
-  PLATFORM_VERSION = "2.9.4"
+  PLATFORM_VERSION = "2.9.5"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Cabecalhos de seguranca (anti-invasao / clickjacking / sniffing / XSS)

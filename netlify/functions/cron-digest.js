@@ -121,10 +121,9 @@ export function renderDigestHtml(d) {
        </table>`
     : `<div style="color:#8fe6a0;font-size:13px;margin-top:6px">Nenhum chamado aguardando 1ª resposta. 🎉</div>`;
 
-  const emailWarn = d.emailConfigured ? "" :
-    `<div style="margin:14px 0;padding:12px 14px;border:1px solid #f0b232;border-radius:10px;background:rgba(240,178,50,.12);color:#f3d171;font-size:13px">
-       ⚠️ <b>E-mail transacional não configurado</b> — configure a chave do Resend em <b>Painel → Integrações → E-mail</b>. Sem ela, ativações e cobranças não são enviadas.
-     </div>`;
+  // Aviso operacional dentro do resumo: os avisos por licenca vivem no Painel →
+  // Notificacoes (nao dependem de e-mail). O e-mail é apenas um canal opcional.
+  const emailWarn = "";
 
   return `<div style="background:#071223;padding:24px;font-family:Segoe UI,Arial,sans-serif">
     <div style="max-width:640px;margin:0 auto;background:#0a1730;border:1px solid #1e3350;border-radius:16px;overflow:hidden">
