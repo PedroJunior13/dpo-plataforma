@@ -104,8 +104,8 @@
     // --- Integrações ---
     sec_integrations: { t: "Integrações", b: "Conexões externas da plataforma: emissão de NFS-e (Focus NFe), gateways de pagamento e canais de aviso (e-mail/WhatsApp). Os parâmetros salvos aqui têm precedência sobre as variáveis de ambiente — você ajusta tudo pelo painel, sem mexer no servidor." },
     integ_nfse: { t: "NFS-e (Focus NFe)", b: "Emissão automática da nota fiscal de serviço a cada pagamento aprovado, via Focus NFe (que abstrai o padrão de cada prefeitura). Obrigatórios: token, CNPJ do emitente, Inscrição Municipal e Código do Município (IBGE). Use o ambiente de Homologação para testar antes de ligar a Produção.", b2: "Dica: o item da lista de serviço 1.07 e a alíquota de ISS 2% são os padrões para licenciamento/suporte em TI no Simples Nacional — confirme com a sua contabilidade." },
-    integ_email: { t: "E-mail transacional (SMTP ou Resend)", b: "Ativa o envio automático de e-mails da plataforma: link de ativação de licença para o cliente, avisos de vencimento/cobrança e notificações de chamados de suporte. Sem isso, nada é enviado por e-mail (você só vê os links no painel).", b2: "Dois métodos: (1) SMTP — use uma caixa que você JÁ tem (um Gmail com 'senha de app', ou o e-mail do seu domínio): informe servidor, porta, usuário e senha; não precisa criar conta nova nem verificar domínio. (2) Resend — API dedicada: crie conta grátis em resend.com, verifique o domínio e cole a API Key. Depois use 'Enviar e-mail de teste' para confirmar. A configuração salva aqui tem precedência sobre variáveis de ambiente." },
-    integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto. O e-mail transacional tem card próprio acima." },
+    integ_others: { t: "Pagamentos & avisos", b: "Gateways de pagamento (PIX/boleto/cartão) e canais de notificação (WhatsApp via Meta) são configurados por variável de ambiente no servidor. Aqui você vê o status de cada um — verde indica configurado e pronto." },
+    sec_notifications: { t: "Notificações", b: "Central de avisos operacionais dentro do próprio painel — não depende de e-mail. A plataforma monitora automaticamente cada licença/assinatura e gera avisos de: assinatura vencida ou a vencer (7 dias), licença vencida ou a vencer, licença aguardando ativação, consultoria suspensa/bloqueada, compra sem licença emitida e clientes acima da cota (cobrança adicional).", b2: "As severidades são: vermelho (crítico — vencido/bloqueado), amarelo (atenção — vence em breve/suspenso) e azul (informativo). Você marca avisos como lidos (fica salvo neste navegador) e o número no menu mostra quantos ainda não foram lidos. Cada aviso tem atalho para abrir a licença correspondente." },
   };
   function openInfo(key) {
     const i = INFO[key]; if (!i) return;
@@ -150,6 +150,7 @@
     const sec = $("#view-" + view); if (sec) sec.classList.remove("hide");
     ({ dashboard: loadDashboard, purchases: loadPurchases, licenses: loadLicenses,
       crm: loadCrm, payments: loadPayments, support: loadSupport,
+      notifications: loadNotifications,
       integrations: loadIntegrations }[view] || (() => {}))();
   }
 
@@ -221,38 +222,14 @@
         nfseLine = `<span class="tag pending">não configurada</span>` +
           (miss.length ? `<div class="small muted" style="margin-top:4px">Falta definir: ${miss.map(esc).join(", ")}</div>` : "");
       }
-      // E-mail transacional (Resend)
-      const em = d.email || {};
-      const emailLine = em.configured
-        ? `<span class="tag active">configurado</span> <span class="small muted">envia de ${esc(em.from || "")}</span>`
-        : `<span class="tag pending">não configurado</span><div class="small muted" style="margin-top:4px">Configure em <b>Integrações → E-mail</b> para ativar os envios.</div>`;
       $("#integ").innerHTML =
         `<div>Pagamento: ${gws.length ? gws.map((g) => `<span class="tag active" style="text-transform:capitalize">${esc(g)}</span>`).join(" ") : '<span class="tag grace">manual (sem gateway)</span>'}</div>` +
-        `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>` +
-        `<div style="margin-top:8px">E-mail: ${emailLine}</div>`;
+        `<div style="margin-top:8px">NFS-e: ${nfseLine}</div>`;
 
-      // Aviso destacado quando o e-mail NÃO está configurado (para o dono saber na hora).
-      const ewBox = $("#emailWarn");
-      if (ewBox) {
-        if (em.configured) {
-          ewBox.innerHTML = "";
-        } else {
-          ewBox.innerHTML =
-            `<div class="card" style="margin-bottom:14px;border:1px solid #f0b232;background:rgba(240,178,50,.10)">
-              <div class="flex" style="gap:10px;align-items:flex-start">
-                <span style="font-size:22px;line-height:1">⚠️</span>
-                <div>
-                  <b style="color:#f0b232">E-mail transacional não configurado</b>
-                  <p class="small muted" style="margin:4px 0 6px">
-                    A plataforma <b>não está enviando e-mails</b> (link de ativação de licença, avisos de cobrança e notificações de chamados${em.inbox ? ` para <b>${esc(em.inbox)}</b>` : ""}).
-                    Ative direto pelo painel: cole a chave da API do <b>Resend</b> em <b>Integrações → E-mail</b> (nenhuma variável no servidor é necessária).
-                  </p>
-                  <button class="btn sm gold" data-goto="integrations">Configurar e-mail agora</button>
-                </div>
-              </div>
-            </div>`;
-        }
-      }
+      // Resumo de Notificações no topo do Painel (a partir do resumo do dashboard).
+      renderNotifSummary(d.notif || { counts: {}, top: [] });
+      // Atualiza o badge do menu (não lidas) com base nos avisos atuais.
+      refreshNotifBadge();
 
       // Vencimentos
       const ov = d.overdue || [];
@@ -316,7 +293,7 @@
     try {
       const r = await api("/owner/digest", { method: "POST", body: "{}" });
       if (r.status === "sent") toast("Resumo enviado para " + (r.to || "seu e-mail") + ".");
-      else toast("Resumo gerado, mas o e-mail não saiu (configure o e-mail em Integrações → E-mail).");
+      else toast("Resumo do negócio gerado. (E-mail é opcional: defina RESEND_API_KEY no servidor para receber por e-mail.)");
     } catch (e) { toast(e.message); } finally { bd.disabled = false; bd.textContent = old; }
   }); }
 
@@ -464,7 +441,7 @@
       em.textContent = `Licença + credenciais enviadas automaticamente para ${r.emailedTo}.`;
       em.style.color = "";
     } else if (r.emailStatus === "queued") {
-      em.textContent = "E-mail automático não configurado (ative em Integrações → E-mail). Copie o link e a chave abaixo e envie ao cliente.";
+      em.textContent = "Envio automático por e-mail não está ativo. Copie o link e a chave abaixo e envie ao cliente.";
       em.style.color = "#e6b800";
     } else if (r.emailStatus === "error") {
       em.textContent = "Falha no envio automático do e-mail. Copie o link e a chave abaixo e envie ao cliente.";
@@ -583,6 +560,14 @@
     const b = e.target.closest("button[data-manage]"); if (!b) return;
     const l = LIC_ROWS.find((x) => x.id === b.dataset.manage); if (l) openManage(l);
   });
+  // Abre o drawer de gestão a partir de um id de licença (usado pelas Notificações).
+  // Garante que a lista de licenças esteja carregada antes de localizar a linha.
+  async function openManageById(id) {
+    let l = LIC_ROWS.find((x) => String(x.id) === String(id));
+    if (!l) { await loadLicenses().catch(() => {}); l = LIC_ROWS.find((x) => String(x.id) === String(id)); }
+    if (l) openManage(l);
+    else toast("Licença não encontrada (pode ter sido removida). Abra a aba Licenças.");
+  }
 
   function openManage(l) {
     const tid = l.tenant_id, lid = l.id;
@@ -1243,31 +1228,6 @@
       const hint = $("#nf_token_hint");
       if (hint) hint.textContent = n.tokenMasked ? `Token atual: ${n.tokenMasked} (deixe em branco para manter)` : "Nenhum token salvo.";
       const tok = $("#nf_token"); if (tok) tok.value = "";
-      // E-mail transacional (SMTP ou Resend)
-      const em = d.email || {};
-      const provider = em.provider === "resend" ? "resend" : "smtp";
-      const eb = $("#emailBadge");
-      if (eb) {
-        if (em.configured) { eb.className = "tag active"; eb.textContent = provider === "smtp" ? "Ativo (SMTP)" : "Ativo (Resend)"; }
-        else { eb.className = "tag grace"; eb.textContent = "Não configurado"; }
-      }
-      set("em_provider", provider);
-      set("em_fromname", em.fromName || "DPO PJ Protection");
-      set("em_fromemail", em.fromEmail || "contato@dpopjprotection.com.br");
-      set("em_inbox", em.inbox || "");
-      // Resend
-      const ekh = $("#em_key_hint");
-      if (ekh) ekh.textContent = em.resendOk ? `Chave atual: ${em.keyMasked} (deixe em branco para manter)` : "Nenhuma chave salva.";
-      const ek = $("#em_key"); if (ek) ek.value = "";
-      // SMTP
-      const smtp = em.smtp || {};
-      set("em_smtp_host", smtp.host || "");
-      set("em_smtp_user", smtp.user || "");
-      set("em_smtp_secure", (smtp.secure === false ? "false" : "true"));
-      const sp = $("#em_smtp_pass"); if (sp) sp.value = "";
-      const sph = $("#em_smtp_pass_hint");
-      if (sph) sph.textContent = smtp.passMasked ? "Senha salva (deixe em branco para manter)." : "Nenhuma senha salva.";
-      toggleEmailProvider();
       // Bloco de demais integrações (somente leitura, vem do dashboard)
       try {
         const dash = await api("/owner/dashboard");
@@ -1278,7 +1238,7 @@
         $("#integOthers").innerHTML =
           `<div style="margin-bottom:6px"><b>Gateways de pagamento</b></div>` +
           all.map((g) => chip(names[g] || g, gws.includes(g))).join("") +
-          `<div class="small muted" style="margin-top:10px">Os gateways e os canais de aviso (e-mail/WhatsApp) são definidos por variável de ambiente no servidor. A NFS-e acima pode ser ajustada direto por aqui.</div>`;
+          `<div class="small muted" style="margin-top:10px">Os gateways e o WhatsApp são definidos por variável de ambiente no servidor. A NFS-e acima pode ser ajustada direto por aqui. Os avisos operacionais (vencimentos, pendências e status de licença) ficam na aba <b>Notificações</b>.</div>`;
       } catch (_) { $("#integOthers").innerHTML = `<span class="muted">—</span>`; }
     } catch (e) {
       const m = $("#nfseMsg"); if (m) { m.style.color = "#ff9aa8"; m.textContent = e.message; }
@@ -1318,66 +1278,145 @@
       catch (e) { nfseMsg(e.message, false); }
       finally { clr.disabled = false; }
     });
-
-    // --- E-mail transacional (SMTP ou Resend) ---
-    const emailMsg = (text, ok) => { const m = $("#emailMsg"); if (!m) return; m.style.color = ok ? "#8fe6a0" : "#ff9aa8"; m.textContent = text || ""; };
-    const emProvider = () => { const el = $("#em_provider"); return el && el.value === "resend" ? "resend" : "smtp"; };
-    const emailPayload = () => {
-      const v = (id) => { const el = $("#" + id); return el ? el.value.trim() : ""; };
-      const raw = (id) => { const el = $("#" + id); return el ? el.value : ""; };
-      const provider = emProvider();
-      const p = { provider, fromName: v("em_fromname"), fromEmail: v("em_fromemail") };
-      if (provider === "resend") {
-        const k = v("em_key"); if (k) p.apiKey = k; // só envia se preenchido
-      } else {
-        p.smtpHost = v("em_smtp_host");
-        p.smtpUser = v("em_smtp_user");
-        p.smtpSecure = ($("#em_smtp_secure") && $("#em_smtp_secure").value === "false") ? "false" : "true";
-        p.smtpPort = p.smtpSecure === "true" ? "465" : "587";
-        const pw = raw("em_smtp_pass"); if (pw) p.smtpPass = pw; // senha pode ter espaços; só envia se preenchida
-      }
-      return p;
-    };
-    const provSel = $("#em_provider");
-    if (provSel) provSel.addEventListener("change", toggleEmailProvider);
-    const esave = $("#btnEmailSave");
-    if (esave) esave.addEventListener("click", async () => {
-      esave.disabled = true; emailMsg("Salvando…", true);
-      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(emailPayload()) }); emailMsg("Configuração de e-mail salva.", true); toast("E-mail salvo."); await loadIntegrations(); }
-      catch (e) { emailMsg(e.message, false); }
-      finally { esave.disabled = false; }
-    });
-    const etest = $("#btnEmailTest");
-    if (etest) etest.addEventListener("click", async () => {
-      etest.disabled = true; emailMsg("Salvando e enviando e-mail de teste…", true);
-      try {
-        // Salva primeiro (para o teste usar exatamente o que está na tela), depois testa.
-        await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(emailPayload()) });
-        const r = await api("/owner/integrations/email/test", { method: "POST", body: JSON.stringify({}) });
-        emailMsg(r.message || "E-mail de teste enviado.", true); toast("E-mail de teste enviado."); await loadIntegrations();
-      }
-      catch (e) { emailMsg(e.message, false); }
-      finally { etest.disabled = false; }
-    });
-    const eclr = $("#btnEmailClearKey");
-    if (eclr) eclr.addEventListener("click", async () => {
-      const isSmtp = emProvider() === "smtp";
-      if (!confirm(isSmtp ? "Remover a senha SMTP salva? Sem ela, os e-mails não são enviados." : "Remover a chave do Resend salva? A plataforma volta a usar a variável de ambiente (se houver).")) return;
-      eclr.disabled = true;
-      const body = isSmtp ? { smtpPass: "", clearSmtpPass: true } : { apiKey: "", clearKey: true };
-      try { await api("/owner/integrations/email", { method: "POST", body: JSON.stringify(body) }); toast("Segredo removido."); await loadIntegrations(); }
-      catch (e) { emailMsg(e.message, false); }
-      finally { eclr.disabled = false; }
-    });
   })();
 
-  // Mostra o bloco do provedor de e-mail selecionado (SMTP x Resend).
-  function toggleEmailProvider() {
-    const sel = $("#em_provider"); const prov = sel && sel.value === "resend" ? "resend" : "smtp";
-    const smtp = $("#em_smtp_block"); const resend = $("#em_resend_block");
-    if (smtp) smtp.style.display = prov === "smtp" ? "" : "none";
-    if (resend) resend.style.display = prov === "resend" ? "" : "none";
+  // ===================================================================
+  //  NOTIFICAÇÕES (central dentro do painel)
+  // ===================================================================
+  // "Lido" é local ao navegador (localStorage): guarda os ids de avisos já vistos.
+  const NOTIF_READ_KEY = "dpo_notif_read";
+  let NOTIF_CACHE = [];         // últimos alerts carregados
+  let NOTIF_FILTER = "all";     // all | unread | danger | warn
+  function notifReadSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(NOTIF_READ_KEY) || "[]")); }
+    catch { return new Set(); }
   }
+  function notifSaveRead(set) {
+    try { localStorage.setItem(NOTIF_READ_KEY, JSON.stringify([...set])); } catch (_) {}
+  }
+  function notifUnreadCount(alerts) {
+    const read = notifReadSet();
+    return (alerts || []).filter((a) => !read.has(a.id)).length;
+  }
+  // Atualiza o badge do menu com base no cache atual (ou busca leve se vazio).
+  async function refreshNotifBadge() {
+    let alerts = NOTIF_CACHE;
+    if (!alerts.length) {
+      try { const r = await api("/owner/notifications"); alerts = r.alerts || []; NOTIF_CACHE = alerts; }
+      catch (_) { alerts = []; }
+    }
+    const badge = $("#notifNavBadge"); if (!badge) return;
+    const n = notifUnreadCount(alerts);
+    badge.textContent = String(n);
+    badge.hidden = n === 0;
+  }
+  const NOTIF_SEV = {
+    danger: { color: "#ff6b7d", bg: "rgba(255,107,125,.10)", label: "Crítico" },
+    warn:   { color: "#f0b232", bg: "rgba(240,178,50,.10)",  label: "Atenção" },
+    info:   { color: "#5aa9e6", bg: "rgba(90,169,230,.10)",  label: "Informativo" },
+  };
+  async function loadNotifications() {
+    const list = $("#notifList"); if (list) list.innerHTML = `<div class="muted">Carregando…</div>`;
+    try {
+      const r = await api("/owner/notifications");
+      NOTIF_CACHE = r.alerts || [];
+      renderNotifKpis(r.counts || {}, NOTIF_CACHE);
+      renderNotifList();
+      refreshNotifBadge();
+    } catch (e) {
+      if (list) list.innerHTML = `<div class="card" style="color:#ff9aa8">${esc(e.message)}</div>`;
+    }
+  }
+  function renderNotifKpis(counts, alerts) {
+    const box = $("#notifKpis"); if (!box) return;
+    const unread = notifUnreadCount(alerts);
+    box.innerHTML = [
+      kpi(counts.total ?? 0, "Total de avisos"),
+      kpi(counts.danger ?? 0, "Críticos", (counts.danger ? "red" : "green")),
+      kpi(counts.warn ?? 0, "Atenção", (counts.warn ? "gold" : "green")),
+      kpi(unread, "Não lidas", unread ? "gold" : "green"),
+    ].join("");
+  }
+  function renderNotifList() {
+    const list = $("#notifList"); if (!list) return;
+    const read = notifReadSet();
+    let items = NOTIF_CACHE.slice();
+    if (NOTIF_FILTER === "unread") items = items.filter((a) => !read.has(a.id));
+    else if (NOTIF_FILTER === "danger") items = items.filter((a) => a.severity === "danger");
+    else if (NOTIF_FILTER === "warn") items = items.filter((a) => a.severity === "warn");
+    if (!items.length) { list.innerHTML = `<p class="muted">Nenhum aviso ${NOTIF_FILTER === "all" ? "no momento. 🎉" : "neste filtro."}</p>`; return; }
+    list.innerHTML = items.map((a) => {
+      const sev = NOTIF_SEV[a.severity] || NOTIF_SEV.info;
+      const isRead = read.has(a.id);
+      const licBtn = a.licenseId
+        ? `<button class="btn sm ghost" data-notif-lic="${esc(a.licenseId)}">Ver licença</button>` : "";
+      const readBtn = isRead
+        ? `<button class="btn sm ghost" data-notif-unread="${esc(a.id)}">Marcar não lida</button>`
+        : `<button class="btn sm ghost" data-notif-read="${esc(a.id)}">Marcar lida</button>`;
+      return `<div class="notif-row" style="display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-left:3px solid ${sev.color};border-radius:10px;margin-bottom:10px;background:${isRead ? "transparent" : sev.bg};${isRead ? "opacity:.65" : ""}">
+        <span style="font-size:18px;line-height:1.2">${a.severity === "danger" ? "🔴" : a.severity === "warn" ? "🟡" : "🔵"}</span>
+        <div style="flex:1;min-width:0">
+          <div class="flex between wrap-actions" style="gap:8px">
+            <b style="color:${sev.color}">${esc(a.title)}</b>
+            <span class="tag ${a.severity === "danger" ? "suspended" : a.severity === "warn" ? "pending" : "grace"}">${esc(sev.label)}</span>
+          </div>
+          <div class="small muted" style="margin:4px 0 8px">${esc(a.detail || "")}</div>
+          <div class="flex wrap-actions" style="gap:6px">${licBtn}${readBtn}</div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  function renderNotifSummary(notif) {
+    const box = $("#emailWarn"); if (!box) return;
+    const c = notif.counts || {};
+    const top = notif.top || [];
+    if (!c.total) { box.innerHTML = ""; return; }
+    const chips =
+      (c.danger ? `<span class="tag suspended">${c.danger} crítico(s)</span> ` : "") +
+      (c.warn ? `<span class="tag pending">${c.warn} atenção</span> ` : "") +
+      (c.info ? `<span class="tag grace">${c.info} informativo(s)</span>` : "");
+    const border = c.danger ? "#ff6b7d" : (c.warn ? "#f0b232" : "#5aa9e6");
+    const bg = c.danger ? "rgba(255,107,125,.08)" : (c.warn ? "rgba(240,178,50,.08)" : "rgba(90,169,230,.08)");
+    box.innerHTML =
+      `<div class="card" style="margin-bottom:14px;border:1px solid ${border};background:${bg}">
+        <div class="flex between wrap-actions" style="gap:10px;align-items:flex-start">
+          <div>
+            <b>🔔 ${c.total} notificaç${c.total === 1 ? "ão" : "ões"} sobre suas licenças</b>
+            <div style="margin:6px 0 8px">${chips}</div>
+            ${top.slice(0, 3).map((a) => `<div class="small muted">• ${esc(a.title)}</div>`).join("")}
+          </div>
+          <button class="btn sm gold" data-goto="notifications">Ver notificações</button>
+        </div>
+      </div>`;
+  }
+  // Delegação de cliques na lista de notificações.
+  { const nl = $("#notifList"); if (nl) nl.addEventListener("click", (e) => {
+    const rl = e.target.closest("[data-notif-read]");
+    const ul = e.target.closest("[data-notif-unread]");
+    const lb = e.target.closest("[data-notif-lic]");
+    if (rl) { const s = notifReadSet(); s.add(rl.getAttribute("data-notif-read")); notifSaveRead(s); renderNotifList(); renderNotifKpis({
+      total: NOTIF_CACHE.length,
+      danger: NOTIF_CACHE.filter((a) => a.severity === "danger").length,
+      warn: NOTIF_CACHE.filter((a) => a.severity === "warn").length,
+    }, NOTIF_CACHE); refreshNotifBadge(); return; }
+    if (ul) { const s = notifReadSet(); s.delete(ul.getAttribute("data-notif-unread")); notifSaveRead(s); renderNotifList(); refreshNotifBadge(); return; }
+    if (lb) { const id = lb.getAttribute("data-notif-lic"); openManageById(id); }
+  }); }
+  { const b = $("#btnNotifReload"); if (b) b.addEventListener("click", loadNotifications); }
+  { const b = $("#btnNotifReadAll"); if (b) b.addEventListener("click", () => {
+    const s = notifReadSet(); NOTIF_CACHE.forEach((a) => s.add(a.id)); notifSaveRead(s);
+    renderNotifList(); renderNotifKpis({
+      total: NOTIF_CACHE.length,
+      danger: NOTIF_CACHE.filter((a) => a.severity === "danger").length,
+      warn: NOTIF_CACHE.filter((a) => a.severity === "warn").length,
+    }, NOTIF_CACHE); refreshNotifBadge(); toast("Todas as notificações marcadas como lidas.");
+  }); }
+  { const f = $("#notifFilters"); if (f) f.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-nf]"); if (!b) return;
+    NOTIF_FILTER = b.getAttribute("data-nf");
+    $$("#notifFilters button[data-nf]").forEach((x) => x.className = "btn sm " + (x === b ? "gold" : "ghost"));
+    renderNotifList();
+  }); }
 
   // ===================================================================
   //  AUDITORIA (trilha completa)

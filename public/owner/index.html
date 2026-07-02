@@ -20,6 +20,7 @@
       <button data-view="crm">CRM</button>
       <button data-view="payments">Financeiro</button>
       <button data-view="support">Suporte<span id="supNavBadge" class="nav-badge" hidden>0</span></button>
+      <button data-view="notifications">Notificações<span id="notifNavBadge" class="nav-badge" hidden>0</span></button>
       <button data-view="integrations">Integrações</button>
       <a href="/app/" class="nav-link" style="color:var(--gold2)">Consultoria ↗</a>
       <a href="/tutorial.html" class="nav-link">Tutorial</a>
@@ -208,6 +209,35 @@
     </div>
   </section>
 
+  <!-- ============ NOTIFICAÇÕES ============ -->
+  <section id="view-notifications" class="view hide">
+    <div class="flex between wrap-actions" style="margin-bottom:6px">
+      <div>
+        <h1>Notificações <span class="info-dot" data-info="sec_notifications" title="Entenda esta área">i</span></h1>
+        <p class="muted small">Central de avisos sobre suas licenças: vencimentos, atrasos, pendências de ativação e cobrança. Atualizada automaticamente a partir do estado real de cada licença.</p>
+      </div>
+      <div class="flex wrap-actions" style="gap:8px">
+        <button class="btn ghost" id="btnNotifReload">Atualizar</button>
+        <button class="btn ghost" id="btnNotifReadAll" title="Marca todos os avisos atuais como lidos">Marcar todas como lidas</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="notifKpis"><div class="muted">Carregando…</div></div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="flex between wrap-actions" style="margin-bottom:6px">
+        <h2 style="margin:0">Avisos</h2>
+        <div class="flex" id="notifFilters" style="gap:6px;flex-wrap:wrap">
+          <button class="btn sm gold" data-nf="all">Todas</button>
+          <button class="btn sm ghost" data-nf="unread">Não lidas</button>
+          <button class="btn sm ghost" data-nf="danger">Críticas</button>
+          <button class="btn sm ghost" data-nf="warn">Atenção</button>
+        </div>
+      </div>
+      <div id="notifList" class="small muted">Carregando…</div>
+    </div>
+  </section>
+
   <!-- ============ INTEGRAÇÕES ============ -->
   <section id="view-integrations" class="view hide">
     <div class="flex between wrap-actions" style="margin-bottom:6px">
@@ -269,68 +299,6 @@
         <button class="btn gold" id="btnNfseSave">Salvar configuração</button>
         <button class="btn ghost" id="btnNfseTest">Testar configuração</button>
         <button class="btn ghost" id="btnNfseClearToken" title="Remove o token salvo (volta a valer a variável de ambiente)">Limpar token</button>
-      </div>
-    </div>
-
-    <!-- E-mail transacional (Resend) -->
-    <div class="card" id="cardEmail" style="margin-top:16px">
-      <div class="flex between wrap-actions">
-        <h2 style="margin:0">E-mail transacional <span class="info-dot" data-info="integ_email" title="Entenda este bloco">i</span></h2>
-        <span id="emailBadge" class="tag grace">Carregando…</span>
-      </div>
-      <p class="muted small" style="margin-top:6px">Ativa o envio de e-mails da plataforma (link de ativação de licença, avisos de cobrança e notificações de chamados). Escolha o método abaixo — a configuração salva aqui tem <b>precedência</b> sobre variáveis do servidor.</p>
-
-      <div class="field" style="margin-top:10px"><label>Método de envio</label>
-        <select id="em_provider">
-          <option value="smtp">SMTP — use um e-mail que você já tem (sem criar conta nova)</option>
-          <option value="resend">Resend — API dedicada (requer conta + domínio verificado)</option>
-        </select>
-      </div>
-
-      <!-- SMTP: caminho de menor atrito (usa uma caixa existente) -->
-      <div id="em_smtp_block">
-        <div class="note ok" style="margin-top:8px">Use uma caixa que você <b>já possui</b>: um <b>Gmail</b> (com “senha de app”) ou o e-mail do seu <b>próprio domínio</b>. Não precisa criar conta de serviço nem verificar domínio em terceiros.</div>
-        <div class="row c2" style="margin-top:10px">
-          <div class="field"><label>Servidor SMTP *</label><input id="em_smtp_host" placeholder="smtp.gmail.com" autocomplete="off"></div>
-          <div class="field"><label>Porta / segurança</label>
-            <select id="em_smtp_secure">
-              <option value="true">465 — SSL/TLS (recomendado)</option>
-              <option value="false">587 — STARTTLS</option>
-            </select>
-          </div>
-        </div>
-        <div class="row c2">
-          <div class="field"><label>Usuário (e-mail de login) *</label><input id="em_smtp_user" placeholder="voce@dpopjprotection.com.br" autocomplete="off"></div>
-          <div class="field"><label>Senha / senha de app *</label>
-            <input id="em_smtp_pass" type="password" placeholder="(em branco mantém a atual)" autocomplete="new-password">
-            <div class="small muted" id="em_smtp_pass_hint">—</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Resend: alternativa por API -->
-      <div id="em_resend_block">
-        <div class="note" style="margin-top:8px">Crie uma conta grátis no <b>resend.com</b>, verifique o domínio <b>dpopjprotection.com.br</b> e gere uma API Key.</div>
-        <div class="field" style="margin-top:10px"><label>API Key do Resend *</label>
-          <input id="em_key" placeholder="(em branco mantém a chave atual)" autocomplete="off">
-          <div class="small muted" id="em_key_hint">—</div>
-        </div>
-      </div>
-
-      <div class="row c2" style="margin-top:6px">
-        <div class="field"><label>Nome do remetente</label><input id="em_fromname" placeholder="DPO PJ Protection"></div>
-        <div class="field"><label>E-mail do remetente</label><input id="em_fromemail" placeholder="contato@dpopjprotection.com.br"></div>
-      </div>
-      <div class="field"><label>Caixa de suporte (recebe avisos)</label>
-        <input id="em_inbox" placeholder="pedrobj@gmail.com" disabled>
-        <div class="small muted">Definida por SUPPORT_EMAIL/OWNER_EMAIL.</div>
-      </div>
-
-      <div id="emailMsg" class="small" style="margin-top:4px"></div>
-      <div class="flex wrap-actions" style="gap:8px;margin-top:10px">
-        <button class="btn gold" id="btnEmailSave">Salvar configuração</button>
-        <button class="btn ghost" id="btnEmailTest" title="Envia um e-mail de teste para a caixa de suporte">Enviar e-mail de teste</button>
-        <button class="btn ghost" id="btnEmailClearKey" title="Remove o segredo salvo (chave do Resend ou senha SMTP)">Limpar segredo</button>
       </div>
     </div>
 
